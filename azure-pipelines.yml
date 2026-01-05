@@ -1,0 +1,77 @@
+trigger:
+- main
+- develop
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  buildConfiguration: 'Release'
+  dotNetFramework: 'net8.0'
+  dotNetVersion: '8.0.x'
+  projectPath: 'MMGT.API.csproj'
+
+stages:
+- stage: Build
+  displayName: 'Build and Package'
+  jobs:
+  - job: BuildJob
+    displayName: 'Build .NET API'
+    steps:
+    - task: UseDotNet@2
+      displayName: 'Use .NET 8 SDK'
+      inputs:
+        packageType: 'sdk'
+        version: $(dotNetVersion)
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore NuGet packages'
+      inputs:
+        command: 'restore'
+        projects: $(projectPath)
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build application'
+      inputs:
+        command: 'build'
+        projects: $(projectPath)
+        arguments: '--configuration $(buildConfiguration) --no-restore'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Run tests'
+      inputs:
+        command: 'test'
+        projects: '**/*Test*.csproj'
+        arguments: '--configuration $(buildConfiguration) --no-build --verbosity normal'
+      continueOnError: true
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish application'
+      inputs:
+        command: 'publish'
+        projects: $(projectPath)
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/app --no-build'
+        publishWebProjects: false
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish unzipped folder artifact'
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/app'
+        artifact: 'mmgt-api-folder'
+        publishLocation: 'pipeline'
+
+    - task: ArchiveFiles@2
+      displayName: 'Create zip artifact'
+      inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/mmgt-api-$(Build.BuildNumber).zip'
+        replaceExistingArchive: true
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish zip artifact'
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/mmgt-api-$(Build.BuildNumber).zip'
+        artifact: 'mmgt-api-package'
+        publishLocation: 'pipeline'
