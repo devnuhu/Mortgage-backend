@@ -1,5 +1,6 @@
 ﻿using MMGT.API.Services.Interfaces;
 using MMGT.API.DTOs.PMI;
+using MMGT.API.DTOs;
 using MMGT.API.Data;
 using MMGT.API.Models;
 using Microsoft.EntityFrameworkCore;
@@ -17,7 +18,9 @@ namespace MMGT.API.Services
 
         public async Task<List<PMICompanyDto>> GetAllPMICompaniesAsync()
         {
+            // Get all PMI companies with application counts in a single query
             var pmiCompanies = await _context.PMICompanies
+                .AsNoTracking()
                 .Select(p => new PMICompanyDto
                 {
                     Id = p.Id,
@@ -29,55 +32,79 @@ namespace MMGT.API.Services
                     Status = p.Status,
                     CreatedAt = p.CreatedAt,
                     UpdatedAt = p.UpdatedAt,
-                    TotalApplications = 0, // We'll calculate this separately if needed
-                    PendingApplications = 0,
-                    ApprovedApplications = 0
+                    TotalApplications = p.Applications.Count,
+                    PendingApplications = p.Applications.Count(a => a.Status == "submitted" || a.Status == "under_review"),
+                    ApprovedApplications = p.Applications.Count(a => a.Status == "approved")
                 })
                 .ToListAsync();
 
-            // Calculate application counts for each PMI company
-            foreach (var pmi in pmiCompanies)
-            {
-                var applications = await _context.Applications
-                    .Where(a => a.PmiCompanyId == pmi.Id)
-                    .ToListAsync();
-
-                pmi.TotalApplications = applications.Count;
-                pmi.PendingApplications = applications.Count(a => a.Status == "submitted" || a.Status == "under_review");
-                pmi.ApprovedApplications = applications.Count(a => a.Status == "approved");
-            }
-
             return pmiCompanies;
+        }
+
+        public async Task<PaginatedResponse<PMICompanyDto>> GetAllPMICompaniesPagedAsync(PaginationRequest pagination)
+        {
+            pagination.Validate();
+
+            var query = _context.PMICompanies
+                .AsNoTracking()
+                .Select(p => new PMICompanyDto
+                {
+                    Id = p.Id,
+                    PmiName = p.PmiName,
+                    EmailAddress = p.EmailAddress,
+                    ResourcePersonName = p.ResourcePersonName,
+                    ResourcePersonEmail = p.ResourcePersonEmail,
+                    PhoneNumber = p.PhoneNumber,
+                    Status = p.Status,
+                    CreatedAt = p.CreatedAt,
+                    UpdatedAt = p.UpdatedAt,
+                    TotalApplications = p.Applications.Count,
+                    PendingApplications = p.Applications.Count(a => a.Status == "submitted" || a.Status == "under_review"),
+                    ApprovedApplications = p.Applications.Count(a => a.Status == "approved")
+                });
+
+            var totalCount = await query.CountAsync();
+
+            var data = await query
+                .Skip((pagination.PageNumber - 1) * pagination.PageSize)
+                .Take(pagination.PageSize)
+                .ToListAsync();
+
+            return new PaginatedResponse<PMICompanyDto>
+            {
+                Data = data,
+                TotalCount = totalCount,
+                PageNumber = pagination.PageNumber,
+                PageSize = pagination.PageSize
+            };
         }
 
         public async Task<PMICompanyDto> GetPMICompanyByIdAsync(Guid id)
         {
             var pmiCompany = await _context.PMICompanies
-                .FirstOrDefaultAsync(p => p.Id == id);
+                .AsNoTracking()
+                .Where(p => p.Id == id)
+                .Select(p => new PMICompanyDto
+                {
+                    Id = p.Id,
+                    PmiName = p.PmiName,
+                    EmailAddress = p.EmailAddress,
+                    ResourcePersonName = p.ResourcePersonName,
+                    ResourcePersonEmail = p.ResourcePersonEmail,
+                    PhoneNumber = p.PhoneNumber,
+                    Status = p.Status,
+                    CreatedAt = p.CreatedAt,
+                    UpdatedAt = p.UpdatedAt,
+                    TotalApplications = p.Applications.Count,
+                    PendingApplications = p.Applications.Count(a => a.Status == "submitted" || a.Status == "under_review"),
+                    ApprovedApplications = p.Applications.Count(a => a.Status == "approved")
+                })
+                .FirstOrDefaultAsync();
 
             if (pmiCompany == null)
                 throw new Exception("PMI Company not found");
 
-            // Calculate application counts
-            var applications = await _context.Applications
-                .Where(a => a.PmiCompanyId == id)
-                .ToListAsync();
-
-            return new PMICompanyDto
-            {
-                Id = pmiCompany.Id,
-                PmiName = pmiCompany.PmiName,
-                EmailAddress = pmiCompany.EmailAddress,
-                ResourcePersonName = pmiCompany.ResourcePersonName,
-                ResourcePersonEmail = pmiCompany.ResourcePersonEmail,
-                PhoneNumber = pmiCompany.PhoneNumber,
-                Status = pmiCompany.Status,
-                CreatedAt = pmiCompany.CreatedAt,
-                UpdatedAt = pmiCompany.UpdatedAt,
-                TotalApplications = applications.Count,
-                PendingApplications = applications.Count(a => a.Status == "submitted" || a.Status == "under_review"),
-                ApprovedApplications = applications.Count(a => a.Status == "approved")
-            };
+            return pmiCompany;
         }
 
         public async Task<PMICompanyDto> CreatePMICompanyAsync(CreatePMIRequest request)

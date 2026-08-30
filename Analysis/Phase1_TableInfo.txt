@@ -1,0 +1,7 @@
+Changed database context to 'MMGTDBCOPY'.
+Msg 156, Level 15, State 1, Server SIGMAENTDB01, Line 3
+Incorrect syntax near the keyword 'Database'.
+Msg 156, Level 15, State 1, Server SIGMAENTDB01, Line 5
+Incorrect syntax near the keyword 'AS'.
+Msg 156, Level 15, State 1, Server SIGMAENTDB01, Line 6
+Incorrect syntax near the keyword 'as'.

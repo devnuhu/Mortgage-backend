@@ -33,10 +33,18 @@ namespace MMGT.API.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasDefaultValueSql("GETDATE()");
+
+                    b.Property<string>("DocumentStorageType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<decimal>("EquityValue")
                         .HasPrecision(18, 2)
@@ -56,9 +64,16 @@ namespace MMGT.API.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<bool>("MandatoryDocumentsComplete")
+                        .HasColumnType("bit");
+
                     b.Property<string>("MiddleName")
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("PhoneNumber")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
 
                     b.Property<Guid>("PmiCompanyId")
                         .HasColumnType("uniqueidentifier");
@@ -117,11 +132,63 @@ namespace MMGT.API.Migrations
                     b.HasIndex("ApplicationNumber")
                         .IsUnique();
 
-                    b.HasIndex("PmiCompanyId");
+                    b.HasIndex("CreatedAt")
+                        .IsDescending();
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("RsaPin")
+                        .IsUnique()
+                        .HasFilter("[Status] IN ('draft', 'submitted', 'under_review', 'returned', 'resubmitted')");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("PmiCompanyId", "CreatedAt")
+                        .IsDescending(false, true);
+
+                    b.HasIndex("Status", "CreatedAt")
+                        .IsDescending(false, true);
+
+                    b.HasIndex("UserId", "CreatedAt")
+                        .IsDescending(false, true);
 
                     b.ToTable("Applications");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ApplicationAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ApplicationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("AssignedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("GETDATE()");
+
+                    b.Property<Guid?>("AssignedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("ReassignmentReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid>("ReviewerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssignedBy");
+
+                    b.HasIndex("ApplicationId", "IsActive");
+
+                    b.HasIndex("ReviewerId", "IsActive");
+
+                    b.ToTable("ApplicationAssignments");
                 });
 
             modelBuilder.Entity("MMGT.API.Models.ApplicationDocument", b =>
@@ -138,10 +205,11 @@ namespace MMGT.API.Migrations
                         .HasColumnType("datetime2")
                         .HasDefaultValueSql("GETDATE()");
 
-                    b.Property<string>("DocumentType")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                    b.Property<Guid>("DocumentTypeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("FileContent")
+                        .HasColumnType("varbinary(max)");
 
                     b.Property<string>("FileName")
                         .IsRequired()
@@ -149,7 +217,6 @@ namespace MMGT.API.Migrations
                         .HasColumnType("nvarchar(255)");
 
                     b.Property<string>("FilePath")
-                        .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
@@ -161,11 +228,91 @@ namespace MMGT.API.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<bool>("IsLatestVersion")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("LegacyDocumentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("ReviewComments")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("ReviewStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ReviewedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("UploadedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("int");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("DocumentTypeId");
+
+                    b.HasIndex("ReviewedBy");
+
+                    b.HasIndex("ApplicationId", "ReviewStatus");
+
+                    b.HasIndex("ApplicationId", "DocumentTypeId", "IsLatestVersion");
+
+                    b.ToTable("ApplicationDocuments");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ApplicationDocumentHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<Guid?>("ApplicationDocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ApplicationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Comments")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("NewFileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<string>("OldFileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<DateTime>("PerformedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("GETDATE()");
+
+                    b.Property<Guid>("PerformedById")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApplicationDocumentId");
 
                     b.HasIndex("ApplicationId");
 
-                    b.ToTable("ApplicationDocuments");
+                    b.ToTable("ApplicationDocumentHistory");
                 });
 
             modelBuilder.Entity("MMGT.API.Models.ApplicationReviewHistory", b =>
@@ -201,6 +348,234 @@ namespace MMGT.API.Migrations
                     b.HasIndex("ReviewedById");
 
                     b.ToTable("ApplicationReviewHistory");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.AssignmentEscalation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ActionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid>("ApplicationAssignmentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("EscalatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("EscalationRuleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<double>("HoursOverThreshold")
+                        .HasColumnType("float");
+
+                    b.Property<Guid?>("ReassignedToReviewerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ResolutionComments")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EscalatedAt")
+                        .IsDescending();
+
+                    b.HasIndex("ReassignedToReviewerId");
+
+                    b.HasIndex("ResolvedBy");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("ApplicationAssignmentId", "Status");
+
+                    b.HasIndex("EscalationRuleId", "Status");
+
+                    b.ToTable("AssignmentEscalations");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.DocumentType", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("GETDATE()");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsMandatory")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("MaxFileSizeKB")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ModifiedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ModifiedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("ModifiedBy");
+
+                    b.HasIndex("IsActive", "DisplayOrder");
+
+                    b.ToTable("DocumentTypes");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.DocumentTypeAuditLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ChangeReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("ChangeType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime>("ChangedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("GETDATE()");
+
+                    b.Property<Guid>("ChangedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("DocumentTypeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("FieldName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("NewValue")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("OldValue")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChangedBy");
+
+                    b.HasIndex("DocumentTypeId", "ChangedAt")
+                        .IsDescending(false, true);
+
+                    b.ToTable("DocumentTypeAuditLogs");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.EscalationRule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ApplicablePriority")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CreatedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("EscalationAction")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("ModifiedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ModifiedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("NotifyEmails")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("RuleName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int>("ThresholdHours")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedBy");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("ModifiedBy");
+
+                    b.HasIndex("ApplicablePriority", "IsActive");
+
+                    b.ToTable("EscalationRules");
                 });
 
             modelBuilder.Entity("MMGT.API.Models.PMICompany", b =>
@@ -255,6 +630,218 @@ namespace MMGT.API.Migrations
                         .IsUnique();
 
                     b.ToTable("PMICompanies");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ReassignmentHistory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ApplicationAssignmentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ApplicationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsCompleted")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("NewAssignmentStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<Guid>("NewReviewerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("PreviousAssignmentStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<Guid>("PreviousReviewerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ReassignedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ReassignedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ReassignmentDetails")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("ReassignmentReason")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApplicationAssignmentId");
+
+                    b.HasIndex("ApplicationId");
+
+                    b.HasIndex("NewReviewerId");
+
+                    b.HasIndex("PreviousReviewerId");
+
+                    b.HasIndex("ReassignedAt")
+                        .IsDescending();
+
+                    b.HasIndex("ReassignedByUserId");
+
+                    b.ToTable("ReassignmentHistories");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ReviewerAvailability", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("LastUpdated")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("ReviewerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("StatusEndDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("StatusStartDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReviewerId");
+
+                    b.ToTable("ReviewerAvailabilities");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ReviewerPerformanceMetrics", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ActiveAssignments")
+                        .HasColumnType("int");
+
+                    b.Property<double>("ApprovalRatePercentage")
+                        .HasColumnType("float");
+
+                    b.Property<double>("AverageHoursPerAssignment")
+                        .HasColumnType("float");
+
+                    b.Property<double>("AverageTurnaroundTimeHours")
+                        .HasColumnType("float");
+
+                    b.Property<int>("CompletedAssignments")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DocumentsApproved")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DocumentsRejected")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DocumentsRevisionRequested")
+                        .HasColumnType("int");
+
+                    b.Property<int>("EscalatedAssignments")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("LastCalculatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PerformanceRating")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<double>("RejectionRatePercentage")
+                        .HasColumnType("float");
+
+                    b.Property<Guid>("ReviewerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<double>("RevisionRequestRatePercentage")
+                        .HasColumnType("float");
+
+                    b.Property<int>("TotalAssignments")
+                        .HasColumnType("int");
+
+                    b.Property<int>("TotalEscalationCount")
+                        .HasColumnType("int");
+
+                    b.Property<double>("TotalHoursSpent")
+                        .HasColumnType("float");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReviewerId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ApprovalRatePercentage", "LastCalculatedAt")
+                        .IsDescending();
+
+                    b.ToTable("ReviewerPerformanceMetrics");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.SystemConfiguration", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ConfigKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("ConfigValue")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("LastModifiedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("GETDATE()");
+
+                    b.Property<Guid>("LastModifiedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConfigKey")
+                        .IsUnique();
+
+                    b.ToTable("SystemConfigurations");
                 });
 
             modelBuilder.Entity("MMGT.API.Models.User", b =>
@@ -333,7 +920,7 @@ namespace MMGT.API.Migrations
             modelBuilder.Entity("MMGT.API.Models.Application", b =>
                 {
                     b.HasOne("MMGT.API.Models.PMICompany", "PmiCompany")
-                        .WithMany()
+                        .WithMany("Applications")
                         .HasForeignKey("PmiCompanyId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
@@ -349,6 +936,32 @@ namespace MMGT.API.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("MMGT.API.Models.ApplicationAssignment", b =>
+                {
+                    b.HasOne("MMGT.API.Models.Application", "Application")
+                        .WithMany("Assignments")
+                        .HasForeignKey("ApplicationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", "AssignedByUser")
+                        .WithMany("AssignmentsMadeByUser")
+                        .HasForeignKey("AssignedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("MMGT.API.Models.User", "Reviewer")
+                        .WithMany("AssignedApplications")
+                        .HasForeignKey("ReviewerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Application");
+
+                    b.Navigation("AssignedByUser");
+
+                    b.Navigation("Reviewer");
+                });
+
             modelBuilder.Entity("MMGT.API.Models.ApplicationDocument", b =>
                 {
                     b.HasOne("MMGT.API.Models.Application", "Application")
@@ -357,7 +970,40 @@ namespace MMGT.API.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("MMGT.API.Models.DocumentType", "DocumentType")
+                        .WithMany("ApplicationDocuments")
+                        .HasForeignKey("DocumentTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", "Reviewer")
+                        .WithMany("ReviewedDocuments")
+                        .HasForeignKey("ReviewedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Application");
+
+                    b.Navigation("DocumentType");
+
+                    b.Navigation("Reviewer");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ApplicationDocumentHistory", b =>
+                {
+                    b.HasOne("MMGT.API.Models.ApplicationDocument", "ApplicationDocument")
+                        .WithMany()
+                        .HasForeignKey("ApplicationDocumentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("MMGT.API.Models.Application", "Application")
+                        .WithMany()
+                        .HasForeignKey("ApplicationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Application");
+
+                    b.Navigation("ApplicationDocument");
                 });
 
             modelBuilder.Entity("MMGT.API.Models.ApplicationReviewHistory", b =>
@@ -379,6 +1025,154 @@ namespace MMGT.API.Migrations
                     b.Navigation("ReviewedBy");
                 });
 
+            modelBuilder.Entity("MMGT.API.Models.AssignmentEscalation", b =>
+                {
+                    b.HasOne("MMGT.API.Models.ApplicationAssignment", "ApplicationAssignment")
+                        .WithMany()
+                        .HasForeignKey("ApplicationAssignmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.EscalationRule", "EscalationRule")
+                        .WithMany("Escalations")
+                        .HasForeignKey("EscalationRuleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", "ReassignedToReviewer")
+                        .WithMany()
+                        .HasForeignKey("ReassignedToReviewerId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("MMGT.API.Models.User", "ResolvedByUser")
+                        .WithMany()
+                        .HasForeignKey("ResolvedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("ApplicationAssignment");
+
+                    b.Navigation("EscalationRule");
+
+                    b.Navigation("ReassignedToReviewer");
+
+                    b.Navigation("ResolvedByUser");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.DocumentType", b =>
+                {
+                    b.HasOne("MMGT.API.Models.User", null)
+                        .WithMany("DocumentTypesCreatedByUser")
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", null)
+                        .WithMany("DocumentTypesModifiedByUser")
+                        .HasForeignKey("ModifiedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.DocumentTypeAuditLog", b =>
+                {
+                    b.HasOne("MMGT.API.Models.User", null)
+                        .WithMany("AuditLogsCreatedByUser")
+                        .HasForeignKey("ChangedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.DocumentType", "DocumentType")
+                        .WithMany("AuditLogs")
+                        .HasForeignKey("DocumentTypeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("DocumentType");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.EscalationRule", b =>
+                {
+                    b.HasOne("MMGT.API.Models.User", "CreatedByUser")
+                        .WithMany("EscalationRulesCreated")
+                        .HasForeignKey("CreatedBy")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", "ModifiedByUser")
+                        .WithMany("EscalationRulesModified")
+                        .HasForeignKey("ModifiedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("CreatedByUser");
+
+                    b.Navigation("ModifiedByUser");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ReassignmentHistory", b =>
+                {
+                    b.HasOne("MMGT.API.Models.ApplicationAssignment", "ApplicationAssignment")
+                        .WithMany()
+                        .HasForeignKey("ApplicationAssignmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.Application", null)
+                        .WithMany()
+                        .HasForeignKey("ApplicationId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", "NewReviewer")
+                        .WithMany()
+                        .HasForeignKey("NewReviewerId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", "PreviousReviewer")
+                        .WithMany()
+                        .HasForeignKey("PreviousReviewerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", "ReassignedByUser")
+                        .WithMany()
+                        .HasForeignKey("ReassignedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("ApplicationAssignment");
+
+                    b.Navigation("NewReviewer");
+
+                    b.Navigation("PreviousReviewer");
+
+                    b.Navigation("ReassignedByUser");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ReviewerAvailability", b =>
+                {
+                    b.HasOne("MMGT.API.Models.User", "Reviewer")
+                        .WithMany()
+                        .HasForeignKey("ReviewerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Reviewer");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.ReviewerPerformanceMetrics", b =>
+                {
+                    b.HasOne("MMGT.API.Models.User", "Reviewer")
+                        .WithMany()
+                        .HasForeignKey("ReviewerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MMGT.API.Models.User", null)
+                        .WithMany("PerformanceMetrics")
+                        .HasForeignKey("UserId");
+
+                    b.Navigation("Reviewer");
+                });
+
             modelBuilder.Entity("MMGT.API.Models.User", b =>
                 {
                     b.HasOne("MMGT.API.Models.PMICompany", "PMICompany")
@@ -391,14 +1185,51 @@ namespace MMGT.API.Migrations
 
             modelBuilder.Entity("MMGT.API.Models.Application", b =>
                 {
+                    b.Navigation("Assignments");
+
                     b.Navigation("Documents");
 
                     b.Navigation("ReviewHistory");
                 });
 
+            modelBuilder.Entity("MMGT.API.Models.DocumentType", b =>
+                {
+                    b.Navigation("ApplicationDocuments");
+
+                    b.Navigation("AuditLogs");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.EscalationRule", b =>
+                {
+                    b.Navigation("Escalations");
+                });
+
             modelBuilder.Entity("MMGT.API.Models.PMICompany", b =>
                 {
+                    b.Navigation("Applications");
+
                     b.Navigation("Users");
+                });
+
+            modelBuilder.Entity("MMGT.API.Models.User", b =>
+                {
+                    b.Navigation("AssignedApplications");
+
+                    b.Navigation("AssignmentsMadeByUser");
+
+                    b.Navigation("AuditLogsCreatedByUser");
+
+                    b.Navigation("DocumentTypesCreatedByUser");
+
+                    b.Navigation("DocumentTypesModifiedByUser");
+
+                    b.Navigation("EscalationRulesCreated");
+
+                    b.Navigation("EscalationRulesModified");
+
+                    b.Navigation("PerformanceMetrics");
+
+                    b.Navigation("ReviewedDocuments");
                 });
 #pragma warning restore 612, 618
         }

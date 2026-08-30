@@ -36,5 +36,6 @@ namespace MMGT.API.Models
 
         // Navigation properties
         public virtual ICollection<User> Users { get; set; } = new List<User>();
+        public virtual ICollection<Application> Applications { get; set; } = new List<Application>();
     }
 }

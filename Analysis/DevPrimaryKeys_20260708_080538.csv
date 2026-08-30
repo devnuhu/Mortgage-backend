@@ -1,0 +1,7 @@
+"TableName","ColumnName","KeyPosition"
+"__EFMigrationsHistory","MigrationId","1"
+"ApplicationDocuments","Id","1"
+"ApplicationReviewHistory","Id","1"
+"Applications","Id","1"
+"PMICompanies","Id","1"
+"Users","Id","1"

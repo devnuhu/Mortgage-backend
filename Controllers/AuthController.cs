@@ -5,6 +5,7 @@ using MMGT.API.DTOs.Auth;
 using MMGT.API.Services.Interfaces;
 using MMGT.API.Data;
 using MMGT.API.Utils;
+using MMGT.API.Exceptions;
 
 namespace MMGT.API.Controllers
 {
@@ -28,6 +29,16 @@ namespace MMGT.API.Controllers
             {
                 var response = await _authService.LoginAsync(request);
                 return Ok(response);
+            }
+            catch (AuthenticationException ex) when (ex.Message.Contains("disabled"))
+            {
+                // Return 403 Forbidden for login access disabled
+                return StatusCode(StatusCodes.Status403Forbidden, new LoginAccessDisabledResponse
+                {
+                    Code = "LOGIN_ACCESS_DISABLED",
+                    Message = ex.Message,
+                    Timestamp = DateTime.UtcNow
+                });
             }
             catch (Exception ex)
             {
@@ -143,6 +154,204 @@ namespace MMGT.API.Controllers
                     UserId = userIdClaim,
                     AllClaims = allClaims
                 });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("admin/reset-password")]
+        [Authorize(Roles = "SUPER_ADMIN")]
+        public async Task<ActionResult<AdminResetPasswordResponse>> AdminResetPassword([FromBody] AdminResetPasswordRequest request)
+        {
+            try
+            {
+                // Extract admin user ID from JWT token claims
+                var adminIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                    ?? User.FindFirst("UserId")?.Value;
+
+                if (string.IsNullOrEmpty(adminIdClaim) || !Guid.TryParse(adminIdClaim, out var adminId))
+                {
+                    return Unauthorized(new { message = "Invalid admin user ID in token" });
+                }
+
+                var result = await _authService.AdminResetPasswordAsync(adminId, request.UserId);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Get all role login access control settings
+        /// Accessible by: LEAD_REVIEWER, ADMIN
+        /// </summary>
+        [HttpGet("role-access-controls")]
+        [Authorize(Roles = "LEAD_REVIEWER,ADMIN")]
+        public async Task<ActionResult<List<RoleLoginAccessDto>>> GetAllRoleLoginAccess()
+        {
+            try
+            {
+                var result = await _authService.GetAllRoleLoginAccessAsync();
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Get login access control settings for a specific role
+        /// Accessible by: LEAD_REVIEWER, ADMIN
+        /// </summary>
+        [HttpGet("role-access-controls/{role}")]
+        [Authorize(Roles = "LEAD_REVIEWER,ADMIN")]
+        public async Task<ActionResult<RoleLoginAccessDto>> GetRoleLoginAccess(string role)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(role))
+                {
+                    return BadRequest(new { message = "Role parameter is required" });
+                }
+
+                var result = await _authService.GetRoleLoginAccessAsync(role);
+                if (result == null)
+                {
+                    return NotFound(new { message = $"No login access configuration found for role: {role}" });
+                }
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Create or update login access control settings for a specific role
+        /// Accessible by: LEAD_REVIEWER, ADMIN
+        /// </summary>
+        [HttpPut("role-access-controls/{role}")]
+        [Authorize(Roles = "LEAD_REVIEWER,ADMIN")]
+        public async Task<ActionResult<RoleLoginAccessDto>> UpdateRoleLoginAccess(
+            string role,
+            [FromBody] UpdateRoleLoginAccessRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(role))
+                {
+                    return BadRequest(new { message = "Role parameter is required" });
+                }
+
+                if (request == null)
+                {
+                    return BadRequest(new { message = "Request body is required" });
+                }
+
+                // Extract user ID from JWT token claims
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                    ?? User.FindFirst("UserId")?.Value;
+
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized(new { message = "Invalid user ID in token" });
+                }
+
+                var result = await _authService.UpdateRoleLoginAccessAsync(role, request, userId);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Schedule automatic disable/enable of login access for a specific role
+        /// The role will be disabled from ScheduledStartTime to ScheduledEndTime (UTC), then automatically re-enabled
+        /// Accessible by: LEAD_REVIEWER, ADMIN
+        /// </summary>
+        [HttpPut("role-access-controls/{role}/schedule")]
+        [Authorize(Roles = "LEAD_REVIEWER,ADMIN")]
+        public async Task<ActionResult<RoleLoginAccessDto>> ScheduleRoleAccess(
+            string role,
+            [FromBody] ScheduleRoleAccessRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(role))
+                {
+                    return BadRequest(new { message = "Role parameter is required" });
+                }
+
+                if (request == null)
+                {
+                    return BadRequest(new { message = "Request body is required" });
+                }
+
+                // Extract user ID from JWT token claims
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                    ?? User.FindFirst("UserId")?.Value;
+
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized(new { message = "Invalid user ID in token" });
+                }
+
+                var result = await _authService.ScheduleRoleAccessAsync(role, request, userId);
+                return Ok(result);
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Cancel a scheduled disable/enable of login access for a specific role
+        /// Accessible by: LEAD_REVIEWER, ADMIN
+        /// </summary>
+        [HttpDelete("role-access-controls/{role}/schedule")]
+        [Authorize(Roles = "LEAD_REVIEWER,ADMIN")]
+        public async Task<ActionResult<RoleLoginAccessDto>> CancelScheduledAccess(string role)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(role))
+                {
+                    return BadRequest(new { message = "Role parameter is required" });
+                }
+
+                // Extract user ID from JWT token claims
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                    ?? User.FindFirst("UserId")?.Value;
+
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized(new { message = "Invalid user ID in token" });
+                }
+
+                var result = await _authService.CancelScheduledAccessAsync(role, userId);
+                return Ok(result);
+            }
+            catch (ValidationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (ResourceNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
             }
             catch (Exception ex)
             {

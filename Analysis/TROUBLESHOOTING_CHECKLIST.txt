@@ -1,0 +1,259 @@
+MIGRATION TROUBLESHOOTING & EXECUTION CHECKLIST
+===============================================
+
+CRITICAL ISSUES ENCOUNTERED & FIXES
+====================================
+
+Issue #1: FK_DocumentTypes_Users_CreatedBy
+-------------------------------------------
+SYMPTOM: Error when deleting Users - "DELETE statement conflicted with REFERENCE constraint"
+REASON: DocumentTypes.CreatedBy column references Users.Id
+CAUSE: During target data clearing, Users was deleted before DocumentTypes entries were cleaned up
+FIX: Check DocumentTypes and EscalationRules for references to Users being deleted
+	 Before deleting Users, remove any rows from DocumentTypes/EscalationRules that reference old Users
+
+Issue #2: Duplicate Primary Key on Users
+------------------------------------------
+SYMPTOM: Error "Violation of PRIMARY KEY constraint 'PK_Users'. Duplicate key value..."
+REASON: Target MMGTDB2A already had Users from a previous incomplete migration
+CAUSE: The DELETE step failed, so old Users were still in the table
+FIX: Ensure DELETE FROM Users completes successfully before INSERT
+
+Issue #3: Duplicate Primary Key on PMICompanies
+-------------------------------------------------
+SYMPTOM: Error "Violation of PRIMARY KEY constraint 'PK_PMICompanies'. Duplicate key value..."
+REASON: Similar to Users - target had existing PMICompanies
+CAUSE: DELETE step failure
+FIX: Ensure DELETE FROM PMICompanies completes successfully
+
+Issue #4: NULL DocumentTypeId
+------------------------------
+SYMPTOM: Error "Cannot insert the value NULL into column 'DocumentTypeId'"
+REASON: DocumentTypeId is NOT NULL but source ApplicationDocuments had no mapped DocumentTypeId
+CAUSE: Source MMGTDBCOPY stores document type as string (DocumentType), not as FK
+FIX: 
+  1. Ensure MMGTDB2A has at least one active DocumentType
+  2. Use a default DocumentTypeId for all migrated docs (stored old type in LegacyDocumentType)
+  3. Create mapping table if different documents should map to different DocumentTypes
+
+Issue #5: FK_Users_PMICompanies_PMICompanyId
+---------------------------------------------
+SYMPTOM: Error when re-enabling constraints - FK violation
+REASON: Users.PMICompanyId references PMICompanies.Id that may not exist
+CAUSE: PMICompany records missing or IDs don't match
+FIX: Verify all Users.PMICompanyId values exist in PMICompanies after migration
+
+SOLUTIONS IMPLEMENTED
+====================
+
+1. STEP 1.5 (NEW): Verify DocumentTypes
+   - Checks that DocumentTypes table is populated
+   - Checks that at least one DocumentType is active
+   - Lists all DocumentTypes for review before proceeding
+   - CRITICAL: Migration WILL FAIL if this step shows 0 active DocumentTypes
+
+2. STEP 3 (UPDATED): Enhanced constraint disabling
+   - Now disables ALL constraints on all tables using dynamic SQL
+   - Deletes child tables before parent tables
+   - Removes DocumentTypes/EscalationRules rows that reference old Users BEFORE deleting Users
+   - Then safely deletes Users and PMICompanies
+
+3. MIGRATION 4 (UPDATED): ApplicationDocuments with default DocumentTypeId
+   - Validates that a default DocumentTypeId exists
+   - Uses COALESCE to derive UploadedBy from history or Applications table
+   - Stores original DocumentType string in LegacyDocumentType for audit trail
+   - Marks all migrated docs as IsLegacy=1
+
+4. CONSTRAINT RE-ENABLING (UPDATED): Dynamic SQL approach
+   - Uses sp_executesql to re-enable constraints on all tables
+   - Handles the case where constraints might be disabled individually
+
+5. NEW FILE: MIGRATION_QUICK_FIX.sql
+   - Simplified, corrected version addressing all known issues
+   - Includes STEP 1: DocumentTypes verification
+   - Includes comprehensive constraint management
+   - Better ordering of operations to avoid FK conflicts
+   - Includes final validation queries
+
+EXECUTION STEPS
+===============
+
+Prerequisites:
+1. MMGTDBCOPY must be accessible and contain source data
+2. MMGTDB2A must exist with target schema
+3. Admin rights to both databases
+4. Take backups of both databases before starting
+
+Execution Order:
+
+Step 1: Run MIGRATION_QUICK_FIX.sql
+   - This is the corrected version addressing all issues
+   - Connection: MMGTDB2A
+   - Expected duration: 2-5 minutes
+
+   Key points from output:
+   - Verify DocumentTypes are found and listed
+   - Verify no constraint errors during re-enable
+   - Check final validation row counts
+
+   If DocumentTypes are empty:
+   - Stop and restore DocumentTypes_BACKUP
+   - Rerun the migration script
+
+   If constraints fail to re-enable:
+   - Check error message for which FK is problematic
+   - Review the validation queries for orphaned records
+   - Manually update tables to fix orphaned records
+
+Step 2: Post-Migration Validation
+   - Run validation queries from STEP 10 of MIGRATION_QUICK_FIX.sql
+   - Verify row counts match expected
+   - Check for any orphaned FK records
+   - Check for NULL values in NOT NULL columns
+
+Step 3: Manual DocumentType Mapping (if needed)
+   - Review ApplicationDocuments.LegacyDocumentType values
+   - If different document types should map to different DocumentTypes:
+	 UPDATE ApplicationDocuments
+	 SET DocumentTypeId = (correct DocumentTypeId)
+	 WHERE LegacyDocumentType = 'somevalue'
+
+Step 4: Connection String Update
+   - Update application connection strings to point to MMGTDB2A
+   - Test application connectivity and functionality
+
+ROLLBACK PROCEDURE
+==================
+
+If migration fails catastrophically:
+
+1. Restore MMGTDB2A from pre-migration backup
+
+2. Or manually cleanup if backup not available:
+
+   USE MMGTDB2A;
+
+   -- Disable constraints
+   ALTER TABLE [all tables] NOCHECK CONSTRAINT ALL;
+
+   -- Delete migrated data (keeping reference data)
+   DELETE FROM ReassignmentHistories;
+   DELETE FROM AssignmentEscalations;
+   DELETE FROM ApplicationAssignments;
+   DELETE FROM ApplicationDocumentHistory;
+   DELETE FROM ApplicationDocuments;
+   DELETE FROM ApplicationReviewHistory;
+   DELETE FROM Applications;
+   DELETE FROM Users;
+   DELETE FROM PMICompanies;
+   -- Keep: DocumentTypes, EscalationRules, SystemConfigurations
+
+   -- Re-enable constraints
+   ALTER TABLE [all tables] WITH CHECK CHECK CONSTRAINT ALL;
+
+KEY VALIDATION QUERIES
+=======================
+
+After migration completes, run these to verify integrity:
+
+-- Row counts
+SELECT 'Users' AS TableName, COUNT(*) AS RowCount FROM Users
+UNION ALL
+SELECT 'PMICompanies', COUNT(*) FROM PMICompanies
+UNION ALL
+SELECT 'Applications', COUNT(*) FROM Applications
+UNION ALL
+SELECT 'ApplicationDocuments', COUNT(*) FROM ApplicationDocuments
+UNION ALL
+SELECT 'ApplicationReviewHistory', COUNT(*) FROM ApplicationReviewHistory;
+
+-- Orphaned records check
+SELECT 'Orphaned Applications.UserId' AS CheckName, COUNT(*) FROM Applications WHERE UserId NOT IN (SELECT Id FROM Users)
+UNION ALL
+SELECT 'Orphaned Applications.PmiCompanyId', COUNT(*) FROM Applications WHERE PmiCompanyId NOT IN (SELECT Id FROM PMICompanies)
+UNION ALL
+SELECT 'Orphaned ApplicationDocuments.DocumentTypeId', COUNT(*) FROM ApplicationDocuments WHERE DocumentTypeId NOT IN (SELECT Id FROM DocumentTypes);
+
+-- NULL columns check
+SELECT 'NULL DocumentStorageType' AS CheckName, COUNT(*) FROM Applications WHERE DocumentStorageType IS NULL
+UNION ALL
+SELECT 'NULL DocumentTypeId', COUNT(*) FROM ApplicationDocuments WHERE DocumentTypeId IS NULL
+UNION ALL
+SELECT 'NULL ApplicationDocuments.Version', COUNT(*) FROM ApplicationDocuments WHERE Version IS NULL
+UNION ALL
+SELECT 'NULL ApplicationDocuments.ReviewStatus', COUNT(*) FROM ApplicationDocuments WHERE ReviewStatus IS NULL;
+
+WHAT'S DIFFERENT IN MMGTDB2A (TARGET) SCHEMA
+==============================================
+
+Target-specific table features that migration handles:
+
+Applications table new columns:
+- DocumentStorageType (set to 'FileSystem')
+- MandatoryDocumentsComplete (set to 0 for legacy)
+- CompletedAt (set based on Status)
+- PhoneNumber (set to NULL for legacy)
+
+ApplicationDocuments table new columns:
+- DocumentTypeId (NOT NULL - critical issue)
+- LegacyDocumentType (stores original string from source)
+- Version (set to 1 for legacy docs)
+- IsLatestVersion (set to 1)
+- ReviewStatus (set to 'pending')
+- ReviewComments (set to NULL)
+- ReviewedBy (set to NULL)
+- ReviewedAt (set to NULL)
+- UploadedBy (derived from ApplicationReviewHistory or Applications.UserId)
+- IsLegacy (set to 1 to mark as imported)
+
+Target-specific tables NOT in source (preserved):
+- ReviewerAvailabilities
+- ReviewerPerformanceMetrics
+- DocumentTypeAuditLogs
+- SystemConfigurations
+- DMICompanies (if exists)
+
+Reference data preserved (backed up before clearing):
+- DocumentTypes
+- EscalationRules
+- SystemConfigurations
+
+PERFORMANCE NOTES
+=================
+
+Expected execution times:
+- STEP 3 (clearing): 10-30 seconds (17K+ ApplicationDocuments + dependencies)
+- Users insert: 2-5 seconds
+- PMICompanies insert: <1 second
+- Applications insert: 5-10 seconds (17K+ rows)
+- ApplicationDocuments insert: 10-20 seconds (31K+ rows)
+- ApplicationReviewHistory insert: 20-40 seconds (39K+ rows)
+- Constraint re-enable: 10-20 seconds
+- Validation: 5-10 seconds
+
+Total estimated time: 2-5 minutes for full migration
+
+COMMON ISSUES & QUICK FIXES
+===========================
+
+Issue: "DocumentTypeId is NULL after migration"
+Fix: Ensure DocumentTypes has at least one active entry before migration
+	 If needed, restore DocumentTypes_BACKUP or create a default DocumentType
+
+Issue: "Orphaned ApplicationDocuments - no matching DocumentTypeId"
+Fix: This means a row was inserted with NULL DocumentTypeId
+	 Check validation query - should be zero
+	 If not zero, manually update: UPDATE ApplicationDocuments SET DocumentTypeId = (valid ID) WHERE DocumentTypeId IS NULL
+
+Issue: "Timeout during Applications insert"
+Fix: Normal for 17K+ rows; increase command timeout in SQL client if needed
+	 Split into smaller batches if necessary
+
+Issue: "FK violation on Users.PMICompanyId"
+Fix: Check if Users references a PMICompanyId that doesn't exist in target
+	 Either create missing PMICompanies or set PMICompanyId to NULL for those Users
+
+Issue: "Cannot re-enable FK_DocumentTypes_Users_CreatedBy"
+Fix: Check if any DocumentTypes.CreatedBy references a non-existent User
+	 Either delete those DocumentTypes rows or update CreatedBy to valid User
+	 Restore DocumentTypes_BACKUP if needed

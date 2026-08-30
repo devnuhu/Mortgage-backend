@@ -1,0 +1,208 @@
+{
+  "info": {
+    "name": "AccessMortgage BLOB Document Upload API",
+    "description": "Complete API collection for BLOB document upload workflow",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login (Get JWT Token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rsaPin\": \"123456\",\n  \"password\": \"password\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:5000/api/auth/login",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "5000",
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Get JWT token for subsequent requests. Save the token from response and set it in the Authorization tab."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Document Upload",
+      "item": [
+        {
+          "name": "Upload New Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "ApplicationId",
+                  "value": "{{application_id}}",
+                  "type": "text"
+                },
+                {
+                  "key": "DocumentType",
+                  "value": "NATIONAL_ID",
+                  "type": "text"
+                },
+                {
+                  "key": "File",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:5000/api/file/upload",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "5000",
+              "path": ["api", "file", "upload"]
+            },
+            "description": "Upload a new PDF document to an application (draft or rejected status)\n\n**Prerequisites:**\n- jwt_token variable set (from login)\n- application_id variable set\n- File selected (PDF only, max 11MB)\n\n**Roles:** CLIENT, PMI, SERVICE_MANAGER"
+          },
+          "response": []
+        },
+        {
+          "name": "Replace Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "ExistingFileId",
+                  "value": "{{file_id}}",
+                  "type": "text"
+                },
+                {
+                  "key": "File",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:5000/api/file/replace",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "5000",
+              "path": ["api", "file", "replace"]
+            },
+            "description": "Replace an existing document with a new one (application must be rejected)\n\n**Prerequisites:**\n- jwt_token variable set\n- file_id variable set (file to replace)\n- File selected (PDF only, max 11MB)\n\n**Roles:** CLIENT, PMI, SERVICE_MANAGER"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Application Files",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:5000/api/file/application/{{application_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "5000",
+              "path": ["api", "file", "application", "{{application_id}}"]
+            },
+            "description": "Get all documents for a specific application\n\nReturns list of FileUploadResponse objects with isBlobStored flag"
+          },
+          "response": []
+        },
+        {
+          "name": "Download Document",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:5000/api/file/download/{{file_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "5000",
+              "path": ["api", "file", "download", "{{file_id}}"]
+            },
+            "description": "Download a document (BLOB-first, fallback to disk)\n\nReturns binary PDF file with proper headers"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Document",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:5000/api/file/{{file_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "5000",
+              "path": ["api", "file", "{{file_id}}"]
+            },
+            "description": "Delete a document (CLIENT role only, application must be draft or rejected)\n\n**Roles:** CLIENT"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "jwt_token",
+      "value": "your_jwt_token_here",
+      "type": "string",
+      "description": "JWT Bearer token from login endpoint"
+    },
+    {
+      "key": "application_id",
+      "value": "550e8400-e29b-41d4-a716-446655440000",
+      "type": "string",
+      "description": "UUID of the application"
+    },
+    {
+      "key": "file_id",
+      "value": "a1b2c3d4-e5f6-47g8-h9i0-j1k2l3m4n5o6",
+      "type": "string",
+      "description": "UUID of the file to download/replace/delete"
+    }
+  ]
+}

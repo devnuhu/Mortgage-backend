@@ -13,5 +13,8 @@ namespace MMGT.API.Services.Interfaces
 
         // Atomically replace an existing file with a new upload
         Task<FileUploadResponse> ReplaceFileAsync(Guid existingFileId, IFormFile newFile, Guid performedById);
+
+        // Merge all BLOB documents for an application into a single PDF
+        Task<byte[]> MergeBlobDocumentsAsync(Guid applicationId);
     }
 }

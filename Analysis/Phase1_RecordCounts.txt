@@ -1,0 +1,6 @@
+Changed database context to 'MMGTDBCOPY'.
+MMGTDBCOPY Tables and Record Counts:
+Msg 208, Level 16, State 1, Server SIGMAENTDB01, Line 3
+Invalid object name 'ApplicationsHistory'.
+Msg 208, Level 16, State 1, Server SIGMAENTDB01, Line 2
+Invalid object name 'ApplicationAssignments'.

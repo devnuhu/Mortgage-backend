@@ -20,7 +20,7 @@ namespace MMGT.API.Controllers
         }
 
         [HttpPost("upload")]
-        [Authorize(Roles = "CLIENT")]
+        [Authorize(Roles = "CLIENT,PMI,SERVICE_MANAGER")]
         public async Task<ActionResult<FileUploadResponse>> Upload([FromForm] FileUploadForm form)
         {
             try
@@ -45,7 +45,7 @@ namespace MMGT.API.Controllers
         }
 
         [HttpPost("replace")]
-        [Authorize(Roles = "CLIENT")]
+        [Authorize(Roles = "CLIENT,PMI,SERVICE_MANAGER")]
         public async Task<ActionResult<FileUploadResponse>> Replace([FromForm] FileReplaceForm form)
         {
             try
@@ -102,7 +102,7 @@ namespace MMGT.API.Controllers
         }
 
         [HttpDelete("{fileId}")]
-        [Authorize(Roles = "CLIENT")]
+        [Authorize(Roles = "CLIENT,PMI,SERVICE_MANAGER")]
         public async Task<ActionResult> DeleteFile(Guid fileId)
         {
             try
@@ -115,7 +115,9 @@ namespace MMGT.API.Controllers
                 if (app.UserId != userId)
                     return Forbid();
 
-                if (app.Status != "rejected" && app.Status != "draft")
+                // Allow delete only in draft status - for quick fixes before submission
+                // Use Replace endpoint for rejected applications (formal resubmission)
+                if (app.Status != "draft")
                     return Forbid();
 
                 var result = await _fileService.DeleteFileAsync(fileId, userId);

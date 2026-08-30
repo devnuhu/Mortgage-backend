@@ -15,6 +15,17 @@ namespace MMGT.API.DTOs.Application
         [MaxLength(100)]
         public string LastName { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Borrower phone number - REQUIRED for SMS notifications
+        /// Must be a valid Nigerian phone number
+        /// Accepted formats: +2348012345678, 08012345678, 2348012345678
+        /// </summary>
+        [Required(ErrorMessage = "Phone number is required for SMS notifications")]
+        [RegularExpression(@"^\+?234\d{10}$|^0\d{10}$", 
+            ErrorMessage = "Phone number must be a valid Nigerian number (10-13 digits with country code 234 or leading 0)")]
+        [MaxLength(20)]
+        public string PhoneNumber { get; set; } = string.Empty;
+
         [Required]
         [MaxLength(15)]
         public string RsaPin { get; set; } = string.Empty;

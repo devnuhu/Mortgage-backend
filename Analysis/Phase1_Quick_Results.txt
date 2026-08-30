@@ -1,0 +1,48 @@
+Changed database context to 'MMGTDBCOPY'.
+==================================================
+MMGTDBCOPY - TABLE LISTING
+==================================================
+TABLE_NAME                                                                                                                       ColumnCount
+-------------------------------------------------------------------------------------------------------------------------------- -----------
+__EFMigrationsHistory                                                                                                                      2
+ApplicationDocuments                                                                                                                       8
+ApplicationReviewHistory                                                                                                                   6
+Applications                                                                                                                              20
+PMICompanies                                                                                                                               9
+Users                                                                                                                                     15
+
+(6 rows affected)
+ 
+==================================================
+MMGTDB2A - TABLE LISTING
+==================================================
+Changed database context to 'MMGTDB2A'.
+TABLE_NAME                                                                                                                       ColumnCount
+-------------------------------------------------------------------------------------------------------------------------------- -----------
+__EFMigrationsHistory                                                                                                                      2
+ApplicationAssignments                                                                                                                     7
+ApplicationDocumentHistory                                                                                                                 9
+ApplicationDocuments                                                                                                                      18
+ApplicationReviewHistory                                                                                                                   6
+Applications                                                                                                                              24
+AssignmentEscalations                                                                                                                     11
+DocumentTypeAuditLogs                                                                                                                      9
+DocumentTypes                                                                                                                             12
+EscalationRules                                                                                                                           12
+PMICompanies                                                                                                                               9
+ReassignmentHistories                                                                                                                     12
+ReviewerAvailabilities                                                                                                                     8
+ReviewerPerformanceMetrics                                                                                                                19
+SystemConfigurations                                                                                                                       6
+Users                                                                                                                                     15
+
+(16 rows affected)
+ 
+==================================================
+RECORD COUNT COMPARISON
+==================================================
+Changed database context to 'MMGTDBCOPY'.
+Msg 156, Level 15, State 1, Server SIGMAENTDB01, Line 4
+Incorrect syntax near the keyword 'RowCount'.
+Msg 156, Level 15, State 1, Server SIGMAENTDB01, Line 4
+Incorrect syntax near the keyword 'RowCount'.

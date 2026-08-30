@@ -1,0 +1,290 @@
+MIGRATION EXECUTION INSTRUCTIONS
+==================================
+
+Files available:
+1. MIGRATION_QUICK_FIX.sql - The corrected and simplified migration script (RECOMMENDED)
+2. MIGRATION_SCRIPTS_COMPLETE.sql - Original script with updates (alternative)
+3. TROUBLESHOOTING_CHECKLIST.txt - Reference guide for issues and fixes
+
+============================================================================
+HOW TO RUN THE MIGRATION
+============================================================================
+
+Option 1: Using SQL Server Management Studio (SSMS) - RECOMMENDED
+------------------------------------------------------------------
+
+1. Open SQL Server Management Studio
+2. Connect to: 172.16.50.42 using appropriate authentication
+   (If prompted for certificate, select "Trust server certificate" or appropriate option)
+3. Switch to MMGTDB2A database (in the connection context)
+4. Open File > Open > File
+5. Navigate to: C:\Users\nuhu.audu\Desktop\PRO\BACKEND\accessmortage-backend_live\Analysis
+6. Select: MIGRATION_QUICK_FIX.sql
+7. Click "Open"
+8. Review the script (should show ~350 lines)
+9. Click "Execute" or press F5
+10. Monitor output in the Results pane
+
+Expected output sequence:
+- STEP 1: "STEP 1: Checking DocumentTypes..."
+- Should list DocumentTypes (requires at least 1 active)
+- STEP 2: "Disabling all foreign key constraints..."
+- STEP 3: "Clearing existing data..."
+- STEP 4: "Migrating Users..." + row count
+- STEP 4b: "Migrating PMICompanies..." + row count
+- STEP 5: "Restoring DocumentTypes and EscalationRules..."
+- STEP 6: "Migrating Applications..." + row count
+- STEP 7: "Migrating ApplicationDocuments..." + row count (or error if no DocumentType)
+- STEP 8: "Migrating ApplicationReviewHistory..." + row count
+- STEP 9: "Re-enabling all constraints..."
+- STEP 10: Final validation with row counts for all tables
+
+Critical check points in output:
+- If STEP 1 shows "No active DocumentTypes found!" - STOP and fix DocumentTypes before continuing
+- If STEP 7 shows "CRITICAL ERROR: No DocumentType found" - STOP, restore DocumentTypes_BACKUP, run again
+- If STEP 9 shows constraint violations - Review error and check TROUBLESHOOTING_CHECKLIST.txt
+
+Option 2: Using sqlcmd (Command Line)
+--------------------------------------
+
+Prerequisites:
+- sqlcmd.exe installed (comes with SQL Server or SSMS)
+- Network connectivity to 172.16.50.42
+- You may need to add -C flag to trust certificate
+
+Command (adjust if SSL cert issues):
+sqlcmd -S 172.16.50.42 -d MMGTDB2A -i "C:\Users\nuhu.audu\Desktop\PRO\BACKEND\accessmortage-backend_live\Analysis\MIGRATION_QUICK_FIX.sql" -b
+
+If certificate errors occur, add: -C (to trust server certificate)
+
+Command with cert handling:
+sqlcmd -S 172.16.50.42 -d MMGTDB2A -i MIGRATION_QUICK_FIX.sql -C -b
+
+If connection is refused, you may need to specify encryption:
+sqlcmd -S tcp:172.16.50.42,1433 -d MMGTDB2A -i MIGRATION_QUICK_FIX.sql -C -b -E
+
+Option 3: Using .NET SQL Client or Entity Framework
+----------------------------------------------------
+
+If running from within your .NET application:
+1. Ensure DefaultConnection in appsettings.json points to MMGTDB2A
+2. Create a migration runner service
+3. Load and execute the T-SQL script text
+4. Handle connection and error cases
+
+Example C# pseudocode:
+var connectionString = configuration.GetConnectionString("DefaultConnection");
+using (var connection = new SqlConnection(connectionString))
+{
+	await connection.OpenAsync();
+	var script = File.ReadAllText("path to MIGRATION_QUICK_FIX.sql");
+	using (var command = new SqlCommand(script, connection))
+	{
+		command.CommandTimeout = 300; // 5 minutes
+		await command.ExecuteNonQueryAsync();
+	}
+}
+
+============================================================================
+SUCCESS INDICATORS
+============================================================================
+
+After executing MIGRATION_QUICK_FIX.sql, you should see:
+
+1. No error messages during execution
+2. Row counts for each table in STEP 10:
+   - Users: should be non-zero (count from MMGTDBCOPY)
+   - PMICompanies: should be non-zero
+   - Applications: should be ~17,241 rows
+   - ApplicationDocuments: should be ~31,509 rows
+   - ApplicationReviewHistory: should be ~39,858 rows
+
+3. All FK Integrity Checks show 0 orphaned records
+
+4. All NULL checks show 0 rows with unexpected NULLs
+
+5. "Migration Complete!" message at end
+
+============================================================================
+FAILURE INDICATORS & RECOVERY
+============================================================================
+
+Error: "No active DocumentTypes found!"
+Status: FATAL - Migration cannot proceed
+Recovery:
+  1. Check DocumentTypes_BACKUP table exists and has rows
+  2. Run: RESTORE DocumentTypes table from backup or manually add entries
+  3. Execute the migration script again
+
+Error during STEP 3 (constraint disabling)
+Status: WARNING - Usually means constraints already disabled
+Recovery:
+  1. Check output for specific constraint names
+  2. Continue execution - step recovery logic may handle it
+  3. If execution stops, manually run rest of script starting from STEP 4
+
+Error: "Violation of FOREIGN KEY constraint..."
+Status: CRITICAL - FK integrity violated
+Recovery:
+  1. Note which table and constraint in error message
+  2. Review TROUBLESHOOTING_CHECKLIST.txt for specific FK
+  3. Manually fix the referenced data
+  4. Restart migration OR just rerun STEP 5+ if data already partially loaded
+
+Error: "Cannot insert the value NULL into column 'DocumentTypeId'"
+Status: CRITICAL - No default DocumentTypeId available
+Recovery:
+  1. Restore DocumentTypes_BACKUP
+  2. Verify MMGTDB2A.DocumentTypes has at least 1 active entry
+  3. Rerun migration script starting from STEP 7
+
+Error: "Duplicate key value..." for Users or PMICompanies
+Status: CRITICAL - Target already has data
+Recovery:
+  1. This means STEP 3 (delete) failed silently
+  2. Manually delete target data:
+	 USE MMGTDB2A;
+	 DELETE FROM Users;
+	 DELETE FROM PMICompanies;
+  3. Rerun migration starting from STEP 4
+
+Error: Constraint re-enable fails on FK_Users_PMICompanies_PMICompanyId or similar
+Status: CRITICAL - Data integrity issue
+Recovery:
+  1. The validation queries in STEP 10 should identify orphaned records
+  2. Review output or manually run validation queries
+  3. Fix orphaned records before re-enabling constraints
+  4. If FK references old company/user IDs that don't exist, update or delete those rows
+
+============================================================================
+TESTING & VALIDATION
+============================================================================
+
+After successful migration, verify data integrity:
+
+1. Connection Test:
+   - Update application connection string to MMGTDB2A
+   - Restart application
+   - Verify no database errors in logs
+
+2. Data Sanity Checks:
+   - List Users: SELECT COUNT(*) FROM Users;
+   - List Applications: SELECT COUNT(*) FROM Applications WHERE Status IS NOT NULL;
+   - Sample document query: SELECT TOP 5 FileName, LegacyDocumentType, DocumentTypeId FROM ApplicationDocuments;
+
+3. Review Historical Data:
+   - Check if all Applications have corresponding ApplicationReviewHistory
+   - Verify ApplicationDocuments map to Applications
+   - Check if any records are missing expected relationships
+
+4. Feature Testing:
+   - Test document upload: Should use DocumentTypeId correctly
+   - Test document retrieval: Should handle IsLegacy flag
+   - Test review workflows: Should have ApplicationReviewHistory data
+
+============================================================================
+ROLLBACK IF NEEDED
+============================================================================
+
+If something goes wrong after migration:
+
+Option 1: Restore from backup (cleanest)
+-----------------------------------------
+1. Restore MMGTDB2A database from pre-migration backup
+2. No manual cleanup needed
+
+Option 2: Manual cleanup (if no backup)
+---------------------------------------
+USE MMGTDB2A;
+
+-- Disable constraints on all affected tables
+ALTER TABLE Applications NOCHECK CONSTRAINT ALL;
+ALTER TABLE ApplicationDocuments NOCHECK CONSTRAINT ALL;
+ALTER TABLE ApplicationReviewHistory NOCHECK CONSTRAINT ALL;
+ALTER TABLE Users NOCHECK CONSTRAINT ALL;
+ALTER TABLE PMICompanies NOCHECK CONSTRAINT ALL;
+
+-- Delete migrated data
+DELETE FROM ApplicationDocuments;
+DELETE FROM ApplicationReviewHistory;
+DELETE FROM Applications;
+DELETE FROM Users;
+DELETE FROM PMICompanies;
+
+-- Re-enable constraints
+ALTER TABLE Applications WITH CHECK CHECK CONSTRAINT ALL;
+ALTER TABLE ApplicationDocuments WITH CHECK CHECK CONSTRAINT ALL;
+ALTER TABLE ApplicationReviewHistory WITH CHECK CHECK CONSTRAINT ALL;
+ALTER TABLE Users WITH CHECK CHECK CONSTRAINT ALL;
+ALTER TABLE PMICompanies WITH CHECK CHECK CONSTRAINT ALL;
+
+-- Verify reference data still exists
+SELECT COUNT(*) FROM DocumentTypes;
+SELECT COUNT(*) FROM EscalationRules;
+
+============================================================================
+NEXT STEPS AFTER SUCCESSFUL MIGRATION
+============================================================================
+
+1. Update application configuration:
+   - Verify DefaultConnection in appsettings.json points to MMGTDB2A
+   - If not already set, update accordingly
+
+2. Test application functionality:
+   - Login with migrated Users
+   - View Applications list
+   - Access ApplicationDocuments
+   - Test all document-related features
+
+3. Review any application errors:
+   - Check logs for any data type mismatches
+   - Verify new columns are handled correctly (Version, IsLatestVersion, ReviewStatus, etc.)
+   - Test document storage paths if FileSystem storage is used
+
+4. DocumentType mapping (if needed):
+   - If different document types were originally distinguished by LegacyDocumentType
+   - Consider creating mapping from LegacyDocumentType to proper DocumentTypeId values
+   - Or create batch update to assign correct DocumentType per business logic
+
+5. Final validation:
+   - All Users can login
+   - All Applications are accessible
+   - All Documents can be retrieved
+   - Review workflows function correctly
+
+============================================================================
+SUPPORT & DIAGNOSTICS
+============================================================================
+
+If you encounter issues, collect the following:
+
+1. Full error message from script output (copy-paste entire error)
+2. Line number where error occurred
+3. Step number that was executing
+4. Row counts from STEP 10 validation (or as far as it got)
+5. Database backup timestamp
+6. Source row counts from MMGTDBCOPY for comparison
+
+Attach these with any support request.
+
+Key diagnostic queries:
+
+-- Compare source and target row counts
+SELECT 'MMGTDBCOPY' AS [Database], 'Users' AS [Table], COUNT(*) AS [Row Count] FROM MMGTDBCOPY.dbo.Users
+UNION ALL SELECT 'MMGTDB2A', 'Users', COUNT(*) FROM MMGTDB2A.dbo.Users
+UNION ALL SELECT 'MMGTDBCOPY', 'Applications', COUNT(*) FROM MMGTDBCOPY.dbo.Applications
+UNION ALL SELECT 'MMGTDB2A', 'Applications', COUNT(*) FROM MMGTDB2A.dbo.Applications
+UNION ALL SELECT 'MMGTDBCOPY', 'ApplicationDocuments', COUNT(*) FROM MMGTDBCOPY.dbo.ApplicationDocuments
+UNION ALL SELECT 'MMGTDB2A', 'ApplicationDocuments', COUNT(*) FROM MMGTDB2A.dbo.ApplicationDocuments
+UNION ALL SELECT 'MMGTDBCOPY', 'ApplicationReviewHistory', COUNT(*) FROM MMGTDBCOPY.dbo.ApplicationReviewHistory
+UNION ALL SELECT 'MMGTDB2A', 'ApplicationReviewHistory', COUNT(*) FROM MMGTDB2A.dbo.ApplicationReviewHistory;
+
+-- Check for any NULL values that shouldn't be there
+SELECT 'ApplicationDocuments.DocumentTypeId' AS Issue, COUNT(*) FROM MMGTDB2A.dbo.ApplicationDocuments WHERE DocumentTypeId IS NULL
+UNION ALL SELECT 'ApplicationDocuments.Version', COUNT(*) FROM MMGTDB2A.dbo.ApplicationDocuments WHERE Version IS NULL
+UNION ALL SELECT 'Applications.DocumentStorageType', COUNT(*) FROM MMGTDB2A.dbo.Applications WHERE DocumentStorageType IS NULL;
+
+-- Orphaned record check
+SELECT 'Orphaned Applications' AS Issue, COUNT(*) FROM MMGTDB2A.dbo.Applications a WHERE a.UserId NOT IN (SELECT Id FROM MMGTDB2A.dbo.Users)
+UNION ALL SELECT 'Orphaned AppDocs', COUNT(*) FROM MMGTDB2A.dbo.ApplicationDocuments ad WHERE ad.ApplicationId NOT IN (SELECT Id FROM MMGTDB2A.dbo.Applications)
+UNION ALL SELECT 'Orphaned DocumentTypeId', COUNT(*) FROM MMGTDB2A.dbo.ApplicationDocuments WHERE DocumentTypeId NOT IN (SELECT Id FROM MMGTDB2A.dbo.DocumentTypes);

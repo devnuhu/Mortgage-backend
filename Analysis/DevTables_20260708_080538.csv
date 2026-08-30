@@ -1,0 +1,7 @@
+"SchemaName","TableName","ColumnCount"
+"dbo","__EFMigrationsHistory","2"
+"dbo","ApplicationDocuments","8"
+"dbo","ApplicationReviewHistory","6"
+"dbo","Applications","20"
+"dbo","PMICompanies","9"
+"dbo","Users","15"

@@ -11,6 +11,7 @@
         public string FirstName { get; set; } = string.Empty;
         public string? MiddleName { get; set; }
         public string LastName { get; set; } = string.Empty;
+        public string? PhoneNumber { get; set; }
 
         // RSA Pin
         public string RsaPin { get; set; } = string.Empty;
@@ -43,5 +44,10 @@
 
         // Document count
         public int DocumentCount { get; set; }
+
+        // Assigned Reviewer Information
+        public string? AssignedReviewerName { get; set; }
+        public string? AssignedReviewerEmail { get; set; }
+        public DateTime? AssignedAt { get; set; }
     }
 }

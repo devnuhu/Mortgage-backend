@@ -1,0 +1,5 @@
+"MigrationId","ProductVersion"
+"20250812234143_MMGTDatabaseV1","8.0.19"
+"20250827170451_AddFirstLoginTokenFields","8.0.19"
+"20250828120000_AddApplicationStatusIndex","8.0.19"
+"20250828130000_AddPerformanceIndexes","8.0.19"

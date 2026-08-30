@@ -1,0 +1,7 @@
+"TableName","ColumnName","ReferencedTable","ReferencedColumn","ForeignKeyName","DeleteAction","UpdateAction"
+"ApplicationDocuments","ApplicationId","Applications","Id","FK_ApplicationDocuments_Applications_ApplicationId","CASCADE","NO_ACTION"
+"ApplicationReviewHistory","ApplicationId","Applications","Id","FK_ApplicationReviewHistory_Applications_ApplicationId","CASCADE","NO_ACTION"
+"ApplicationReviewHistory","ReviewedById","Users","Id","FK_ApplicationReviewHistory_Users_ReviewedById","NO_ACTION","NO_ACTION"
+"Applications","UserId","Users","Id","FK_Applications_Users_UserId","NO_ACTION","NO_ACTION"
+"Applications","PmiCompanyId","PMICompanies","Id","FK_Applications_PMICompanies_PmiCompanyId","NO_ACTION","NO_ACTION"
+"Users","PMICompanyId","PMICompanies","Id","FK_Users_PMICompanies_PMICompanyId","NO_ACTION","NO_ACTION"

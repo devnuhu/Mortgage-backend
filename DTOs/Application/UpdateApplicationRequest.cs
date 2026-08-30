@@ -13,6 +13,9 @@ namespace MMGT.API.DTOs.Application
         [MaxLength(100)]
         public string? LastName { get; set; }
 
+        [MaxLength(20)]
+        public string? PhoneNumber { get; set; }
+
         [MaxLength(15)]
         public string? RsaPin { get; set; }
 

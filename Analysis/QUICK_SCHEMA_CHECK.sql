@@ -1,0 +1,20 @@
+-- Quick schema discovery for target tables with NULL constraints
+-- Run this to see all columns that are NOT NULL
+
+USE MMGTDB2A
+GO
+
+PRINT 'Applications table - NOT NULL columns:'
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'Applications' AND TABLE_SCHEMA = 'dbo'
+ORDER BY ORDINAL_POSITION
+GO
+
+PRINT ''
+PRINT 'ApplicationReviewHistory table - NOT NULL columns:'
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'ApplicationReviewHistory' AND TABLE_SCHEMA = 'dbo'
+ORDER BY ORDINAL_POSITION
+GO

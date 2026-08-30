@@ -12,7 +12,7 @@ namespace MMGT.API.Models
 
         [Required]
         [MaxLength(50)]
-        public string Status { get; set; } = "draft"; // draft, submitted, under_review, approved, rejected, returned, completed
+        public string Status { get; set; } = "draft"; // draft, submitted, under_review, pending, approved, rejected, returned, completed
 
         [Required]
         [MaxLength(50)]
@@ -30,7 +30,15 @@ namespace MMGT.API.Models
         [MaxLength(100)]
         public string LastName { get; set; } = string.Empty;
 
+        // Borrower Phone Number
+        [MaxLength(20)]
+        public string? PhoneNumber { get; set; }
+
         // RSA Pin (required for Nigerian mortgage)
+        /// <summary>
+        /// UNIQUE constraint: only one active application per RsaPin (duplicate prevention)
+        /// Enforced at application level and database level
+        /// </summary>
         [Required]
         [MaxLength(15)]
         public string RsaPin { get; set; } = string.Empty;
@@ -70,6 +78,27 @@ namespace MMGT.API.Models
 
         public DateTime? SubmittedAt { get; set; }
 
+        /// <summary>
+        /// When the application review was completed (approved or rejected)
+        /// </summary>
+        public DateTime? CompletedAt { get; set; }
+
+        /// <summary>
+        /// Storage type for documents: "FileSystem" (legacy) or "Database" (new)
+        /// Determines whether ApplicationDocument.FilePath or FileContent is populated
+        /// </summary>
+        [Required]
+        [MaxLength(50)]
+        public string DocumentStorageType { get; set; } = "FileSystem"; // FileSystem or Database
+
+        /// <summary>
+        /// Validation status: false = missing mandatory documents, true = all mandatory documents uploaded
+        /// Used to prevent submission of incomplete applications
+        /// Auto-calculated when documents change
+        /// </summary>
+        [Required]
+        public bool MandatoryDocumentsComplete { get; set; } = false;
+
         // Foreign Keys
         public Guid UserId { get; set; }
         public virtual User User { get; set; } = null!;
@@ -80,5 +109,6 @@ namespace MMGT.API.Models
         // Navigation properties
         public virtual ICollection<ApplicationDocument> Documents { get; set; } = new List<ApplicationDocument>();
         public virtual ICollection<ApplicationReviewHistory> ReviewHistory { get; set; } = new List<ApplicationReviewHistory>();
+        public virtual ICollection<ApplicationAssignment> Assignments { get; set; } = new List<ApplicationAssignment>();
     }
 }
