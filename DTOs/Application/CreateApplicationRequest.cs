@@ -18,11 +18,12 @@ namespace MMGT.API.DTOs.Application
         /// <summary>
         /// Borrower phone number - REQUIRED for SMS notifications
         /// Must be a valid Nigerian phone number
-        /// Accepted formats: +2348012345678, 08012345678, 2348012345678
+        /// Accepted formats: +2348012345678, 2348012345678, 08012345678, 8012345678 (10 digits)
+        /// SMS output format: 2348012345678 (standardized)
         /// </summary>
         [Required(ErrorMessage = "Phone number is required for SMS notifications")]
-        [RegularExpression(@"^\+?234\d{10}$|^0\d{10}$", 
-            ErrorMessage = "Phone number must be a valid Nigerian number (10-13 digits with country code 234 or leading 0)")]
+        [RegularExpression(@"^\+?234\d{10}$|^0\d{10}$|\d{10}$", 
+            ErrorMessage = "Phone number must be a valid Nigerian number: +2348012345678, 2348012345678, 08012345678, or 8012345678 (10 digits)")]
         [MaxLength(20)]
         public string PhoneNumber { get; set; } = string.Empty;
 

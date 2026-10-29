@@ -24,7 +24,9 @@ namespace MMGT.API.Services
         /// Rules:
         /// - If starts with "+", remove it
         /// - If starts with "0", remove it and prepend "234"
+        /// - If exactly 10 digits (no prefix), prepend "234"
         /// - If already starts with "234", keep as is
+        /// Output format: 234XXXXXXXXXX (13 digits)
         /// </summary>
         public string FormatPhoneNumber(string phoneNumber)
         {
@@ -50,6 +52,12 @@ namespace MMGT.API.Services
             {
                 cleaned = "234" + cleaned.Substring(1);
                 _logger.LogInformation("[FMT-STEP3] Converted leading '0' to '234': '{Result}'", cleaned);
+            }
+            // Handle exactly 10 digits (no prefix) - prepend "234"
+            else if (cleaned.Length == 10 && IsNumeric(cleaned))
+            {
+                cleaned = "234" + cleaned;
+                _logger.LogInformation("[FMT-STEP3-NEW] 10-digit format detected, prepended '234': '{Result}'", cleaned);
             }
 
             // Validate format (should start with 234 and be numeric)

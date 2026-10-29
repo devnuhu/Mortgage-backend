@@ -1,4 +1,4 @@
-﻿using MMGT.API.Services.Interfaces;
+using MMGT.API.Services.Interfaces;
 using MMGT.API.DTOs.Application;
 using MMGT.API.DTOs;
 using MMGT.API.Data;
@@ -580,11 +580,20 @@ namespace MMGT.API.Services
             try
             {
                 var applicantEmail = application.PmiRepEmail; // PMI rep (owner)
+                var creatorEmail = application.User?.Email;
+                var isRejection = string.Equals(request.Status?.Trim(), "rejected", StringComparison.OrdinalIgnoreCase);
+                if (isRejection && !string.IsNullOrWhiteSpace(creatorEmail))
+                {
+                    // The user who created the application is told it was rejected, with the reviewer's comments.
+                    await _emailService.SendApplicationRejectedAsync(creatorEmail, application.Id, application.ApplicationNumber, application.RsaPin, $"{application.FirstName} {application.LastName}", request.Comments);
+                }
                 var applicantName = $"{application.FirstName} {application.LastName}";
 
                 if (!string.IsNullOrWhiteSpace(applicantEmail))
                 {
-                    await _emailService.SendApplicationStatusUpdatedAsync(applicantEmail, application.Id, application.ApplicationNumber, applicantName, request.Status, request.Comments);
+                    // On a rejection the creator already got the rejection email above, so the same address is not sent a second one.
+                    if (!(isRejection && string.Equals(creatorEmail?.Trim(), applicantEmail.Trim(), StringComparison.OrdinalIgnoreCase)))
+                        await _emailService.SendApplicationStatusUpdatedAsync(applicantEmail, application.Id, application.ApplicationNumber, applicantName, request.Status, request.Comments);
                 }
 
                 var pmiEmail = _context.PMICompanies

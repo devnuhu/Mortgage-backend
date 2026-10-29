@@ -6,6 +6,7 @@ using MMGT.API.Data;
 using MMGT.API.Helpers;
 using MMGT.API.Services;
 using MMGT.API.Services.Interfaces;
+using MMGT.API.Services.Email;
 using MMGT.API.Middleware;
 using System.Text;
 
@@ -13,7 +14,11 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 // register typed HttpClient for Infobip email service
-builder.Services.AddHttpClient<IEmailService, InfobipEmailService>()
+EmailBrand.Current = EmailBrand.FromConfiguration(builder.Configuration);
+if (string.Equals(builder.Configuration["EmailSettings:Provider"], "Off", StringComparison.OrdinalIgnoreCase))
+    builder.Services.AddScoped<IEmailService, NullEmailService>();
+else
+    builder.Services.AddHttpClient<IEmailService, InfobipEmailService>()
     .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(10));
 
 builder.Services.AddControllers();
