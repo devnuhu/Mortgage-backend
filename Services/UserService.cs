@@ -1,10 +1,11 @@
-﻿using MMGT.API.Services.Interfaces;
+using MMGT.API.Services.Interfaces;
 using MMGT.API.DTOs.User;
 using MMGT.API.Data;
 using MMGT.API.Models;
 using Microsoft.EntityFrameworkCore;
 using BCrypt.Net;
 using MMGT.API.Utils;
+using System.Security.Cryptography;
 
 namespace MMGT.API.Services
 {
@@ -67,30 +68,9 @@ namespace MMGT.API.Services
 
             var now = DateTime.UtcNow;
 
-            // Determine password and token behavior:
-            // - If admin provided a TemporaryPassword in the request, use it (user can login immediately).
-            // - Otherwise, generate a placeholder password and generate a first-login token (emailed to the user).
-            string passwordToHash;
-            string? hashedToken = null;
-            DateTime? expiry = null;
-            string? tokenToSend = null;
-
-            if (!string.IsNullOrWhiteSpace(request.TemporaryPassword))
-            {
-                passwordToHash = request.TemporaryPassword;
-            }
-            else
-            {
-                // Generate a safe placeholder password so account has a valid hash
-                passwordToHash = GenerateTempPassword();
-
-                // Generate one-time token and store hashed token + expiry for first-login flow
-                tokenToSend = SecurityHelpers.GenerateUrlSafeToken();
-                hashedToken = SecurityHelpers.HashToken(tokenToSend);
-                expiry = DateTime.UtcNow.AddHours(2);
-            }
-
-            var hashedPassword = BCrypt.Net.BCrypt.HashPassword(passwordToHash);
+            // A temporary password is always generated here and emailed to the user.
+            // The user must change it at first sign-in (IsFirstLogin stays true).
+            var temporaryPassword = GenerateTempPassword();
 
             var user = new User
             {
@@ -99,13 +79,13 @@ namespace MMGT.API.Services
                 FirstName = request.FirstName,
                 LastName = request.LastName,
                 Role = request.Role,
-                PasswordHash = hashedPassword,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword),
                 IsFirstLogin = true,
                 IsActive = true,
                 PMICompanyId = request.PMICompanyId,
                 PMIEmail = pmiCompany?.EmailAddress,
-                FirstLoginTokenHash = hashedToken,
-                FirstLoginTokenExpiresAt = expiry,
+                FirstLoginTokenHash = null,
+                FirstLoginTokenExpiresAt = null,
                 CreatedAt = now,
                 UpdatedAt = now
             };
@@ -113,18 +93,7 @@ namespace MMGT.API.Services
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            // Only send first-login link email when a token was generated (i.e., admin didn't provide a temp password)
-            if (tokenToSend != null)
-            {
-                try
-                {
-                    _ = Task.Run(() => _emailService.SendFirstLoginLinkAsync(user.Id, user.Email, tokenToSend));
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Failed to queue/send first-login email: " + ex.Message);
-                }
-            }
+            QueueTemporaryPasswordEmail(user.Email, user.FirstName, temporaryPassword, true);
 
             return await GetUserByIdAsync(user.Id);
         }
@@ -168,64 +137,77 @@ namespace MMGT.API.Services
             // Update user password
             user.PasswordHash = hashedPassword;
             user.IsFirstLogin = true;
+            user.FirstLoginTokenHash = null;
+            user.FirstLoginTokenExpiresAt = null;
             user.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
 
-            // TODO: Send email with new temporary password to user.Email
+            QueueTemporaryPasswordEmail(user.Email, user.FirstName, tempPassword, false);
             return tempPassword;
         }
 
+        /// <summary>
+        /// Kept under its old name because the controller calls it. New accounts no longer use a setup link,
+        /// so this now generates a fresh temporary password and emails it again.
+        /// </summary>
         public async Task<bool> ResendFirstLoginLinkAsync(Guid userId)
         {
             var user = await _context.Users.FindAsync(userId);
             if (user == null || !user.IsActive) return false;
 
-            var token = SecurityHelpers.GenerateUrlSafeToken();
-            user.FirstLoginTokenHash = SecurityHelpers.HashToken(token);
-            user.FirstLoginTokenExpiresAt = DateTime.UtcNow.AddHours(2);
+            var tempPassword = GenerateTempPassword();
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(tempPassword);
+            user.IsFirstLogin = true;
+            user.FirstLoginTokenHash = null;
+            user.FirstLoginTokenExpiresAt = null;
             user.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
-            try
-            {
-                _ = Task.Run(() => _emailService.SendFirstLoginLinkAsync(user.Id, user.Email, token));
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Failed to resend first-login email: " + ex.Message);
-            }
-
+            QueueTemporaryPasswordEmail(user.Email, user.FirstName, tempPassword, true);
             return true;
         }
 
+        /// <summary>Sends the email in the background. A failure is never allowed to break the request, and the password is never logged.</summary>
+        private void QueueTemporaryPasswordEmail(string email, string firstName, string temporaryPassword, bool newAccount)
+        {
+            var emailService = _emailService;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await emailService.SendTemporaryPasswordAsync(email, firstName, temporaryPassword, newAccount);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Failed to send temporary password email: " + ex.GetType().Name);
+                }
+            });
+        }
+
+        /// <summary>12 characters from a cryptographic random source, with at least one upper case, lower case, digit and symbol.</summary>
         private string GenerateTempPassword()
         {
             const string upperCase = "ABCDEFGHJKMNPQRSTUVWXYZ";
             const string lowerCase = "abcdefghijkmnpqrstuvwxyz";
             const string numbers = "23456789";
-            const string specialChars = "!@#$%^&*";
-
-            var random = new Random();
-            var password = new char[12];
-
-            // Ensure at least one character from each category
-            password[0] = upperCase[random.Next(upperCase.Length)];
-            password[1] = lowerCase[random.Next(lowerCase.Length)];
-            password[2] = numbers[random.Next(numbers.Length)];
-            password[3] = specialChars[random.Next(specialChars.Length)];
-
-            // Fill the rest randomly
+            const string specialChars = "!@#$%&?";
             const string allChars = upperCase + lowerCase + numbers + specialChars;
+
+            var password = new char[12];
+            password[0] = upperCase[RandomNumberGenerator.GetInt32(upperCase.Length)];
+            password[1] = lowerCase[RandomNumberGenerator.GetInt32(lowerCase.Length)];
+            password[2] = numbers[RandomNumberGenerator.GetInt32(numbers.Length)];
+            password[3] = specialChars[RandomNumberGenerator.GetInt32(specialChars.Length)];
             for (int i = 4; i < 12; i++)
             {
-                password[i] = allChars[random.Next(allChars.Length)];
+                password[i] = allChars[RandomNumberGenerator.GetInt32(allChars.Length)];
             }
 
-            // Shuffle the array
+            // Shuffle
             for (int i = password.Length - 1; i > 0; i--)
             {
-                int j = random.Next(i + 1);
+                int j = RandomNumberGenerator.GetInt32(i + 1);
                 (password[i], password[j]) = (password[j], password[i]);
             }
 

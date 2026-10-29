@@ -12,6 +12,8 @@ namespace MMGT.API.Services.Interfaces
         Task SendApplicationCreatedNotificationAsync(string toEmail, Guid applicationId, string applicationNumber, string applicantName, CancellationToken ct = default);
 
         // Sends a notification when an application's status is updated (includes comments)
+        Task SendTemporaryPasswordAsync(string toEmail, string firstName, string temporaryPassword, bool newAccount, CancellationToken ct = default);
+
         Task SendApplicationRejectedAsync(string toEmail, Guid applicationId, string applicationNumber, string rsaPin, string applicantName, string? reason, CancellationToken ct = default);
 
         Task SendApplicationStatusUpdatedAsync(string toEmail, Guid applicationId, string applicationNumber, string applicantName, string newStatus, string? comments, CancellationToken ct = default);

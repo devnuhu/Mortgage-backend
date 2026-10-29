@@ -24,6 +24,12 @@ namespace MMGT.API.Services.Email
             return Task.CompletedTask;
         }
 
+        public Task SendTemporaryPasswordAsync(string toEmail, string firstName, string temporaryPassword, bool newAccount, CancellationToken ct = default)
+        {
+            _logger.LogInformation("Email sending is switched off (EmailSettings:Provider). Not sent: temporary password email.");
+            return Task.CompletedTask;
+        }
+
         public Task SendApplicationRejectedAsync(string toEmail, Guid applicationId, string applicationNumber, string rsaPin, string applicantName, string? reason, CancellationToken ct = default)
         {
             _logger.LogInformation("Email sending is switched off (EmailSettings:Provider). Not sent: rejection of {Number}.", applicationNumber);

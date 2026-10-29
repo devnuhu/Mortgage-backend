@@ -1,4 +1,3 @@
-﻿
 using System;
 using System.ComponentModel.DataAnnotations;
 
@@ -23,9 +22,10 @@ namespace MMGT.API.DTOs.User
 
         public Guid? PMICompanyId { get; set; }
 
-        
-        [Required]
-        [MinLength(8)]
-        public string TemporaryPassword { get; set; } = string.Empty;
+        /// <summary>
+        /// Not used any more. A temporary password is always generated and emailed to the user.
+        /// The property stays so that older callers that still send it are not rejected.
+        /// </summary>
+        public string? TemporaryPassword { get; set; }
     }
 }

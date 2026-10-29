@@ -89,6 +89,33 @@ namespace MMGT.API.Services
             return SendAsync(toEmail, content, ct);
         }
 
+        public Task SendTemporaryPasswordAsync(string toEmail, string firstName, string temporaryPassword, bool newAccount, CancellationToken ct = default)
+        {
+            var brand = EmailBrand.Current;
+            var name = string.IsNullOrWhiteSpace(firstName) ? (toEmail ?? string.Empty).Split('@')[0] : firstName.Trim();
+
+            var blocks = new List<EmailBlock>();
+            if (newAccount)
+                blocks.Add(EmailBlock.Paragraph($"Welcome to the **{brand.AppName}** at {brand.CompanyName}. An account has been created for you. Use the details below to sign in for the first time."));
+            else
+                blocks.Add(EmailBlock.Paragraph("Your password has been reset. Use the details below to sign in."));
+            blocks.Add(EmailBlock.Details(("Sign-in email", toEmail ?? string.Empty), ("Temporary password", temporaryPassword)));
+            blocks.Add(EmailBlock.Callout("This password is temporary. You will be asked to choose a new password the first time you sign in. Keep it private and do not share it with anyone.", "warning"));
+            blocks.Add(EmailBlock.Button("Sign in", _frontend));
+            blocks.Add(EmailBlock.Note($"If you were not expecting this email, please contact {brand.SupportEmail}."));
+
+            var content = new EmailContent
+            {
+                Subject = newAccount ? $"Welcome to the {brand.AppName}" : "Your password has been reset",
+                Heading = newAccount ? "Welcome aboard" : "Password reset",
+                Preheader = newAccount ? "Your account is ready. Your temporary password is inside." : "Your temporary password is inside.",
+                Greeting = $"Dear {name},",
+                Automatic = true,
+                Blocks = blocks
+            };
+            return SendAsync(toEmail ?? string.Empty, content, ct);
+        }
+
         public Task SendApplicationRejectedAsync(string toEmail, Guid applicationId, string applicationNumber, string rsaPin, string applicantName, string? reason, CancellationToken ct = default)
         {
             var appLink = $"{_frontend}/applications/{applicationId}";
