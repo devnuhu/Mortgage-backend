@@ -1,4 +1,4 @@
-﻿using MMGT.API.Services.Interfaces;
+using MMGT.API.Services.Interfaces;
 using MMGT.API.DTOs.Auth;
 using MMGT.API.DTOs.User;
 using MMGT.API.Data;
@@ -14,11 +14,13 @@ namespace MMGT.API.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly JwtHelper _jwtHelper;
+        private readonly IEmailService _emailService;
 
-        public AuthService(ApplicationDbContext context, JwtHelper jwtHelper)
+        public AuthService(ApplicationDbContext context, JwtHelper jwtHelper, IEmailService emailService)
         {
             _context = context;
             _jwtHelper = jwtHelper;
+            _emailService = emailService;
         }
 
         public async Task<LoginResponse> LoginAsync(LoginRequest request)
@@ -155,9 +157,27 @@ namespace MMGT.API.Services
                 // Hash and set the temporary password
                 targetUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword);
                 targetUser.IsFirstLogin = true; // Force first login to change password
+                targetUser.FirstLoginTokenHash = null;
+                targetUser.FirstLoginTokenExpiresAt = null;
                 targetUser.UpdatedAt = DateTime.UtcNow;
 
                 await _context.SaveChangesAsync();
+
+                // Email the temporary password to the user in the background. A failure never breaks the reset, and the password is never logged.
+                var emailTo = targetUser.Email;
+                var emailName = targetUser.FirstName;
+                var emailService = _emailService;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await emailService.SendTemporaryPasswordAsync(emailTo, emailName, temporaryPassword, false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Failed to send temporary password email: " + ex.GetType().Name);
+                    }
+                });
 
                 return new AdminResetPasswordResponse
                 {
@@ -165,7 +185,7 @@ namespace MMGT.API.Services
                     UserEmail = targetUser.Email,
                     UserName = $"{targetUser.FirstName} {targetUser.LastName}",
                     TemporaryPassword = temporaryPassword,
-                    Message = $"Password reset successful for {targetUser.FirstName} {targetUser.LastName}. Share the temporary password with the user. They will be required to change it on first login."
+                    Message = $"Password reset successful for {targetUser.FirstName} {targetUser.LastName}. The temporary password has also been emailed to {targetUser.Email}. They will be required to change it on first login."
                 };
             }
             catch (Exception ex)
@@ -174,14 +194,20 @@ namespace MMGT.API.Services
             }
         }
 
+        // Gives the password generator below a cryptographic source with the same Next(n) call it already uses.
+        private sealed class SecureRandomSource
+        {
+            public int Next(int maxExclusive) => System.Security.Cryptography.RandomNumberGenerator.GetInt32(maxExclusive);
+        }
+
         private string GenerateTemporaryPassword()
         {
             const string uppercaseChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
             const string lowercaseChars = "abcdefghijklmnopqrstuvwxyz";
             const string digitChars = "0123456789";
-            const string specialChars = "!@#$%^&*";
+            const string specialChars = "!@#$%&?";
 
-            var random = new Random();
+            var random = new SecureRandomSource();
             var password = new StringBuilder();
 
             // Ensure at least one of each type
