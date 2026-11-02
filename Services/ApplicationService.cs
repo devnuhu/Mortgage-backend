@@ -1,4 +1,4 @@
-﻿using MMGT.API.Services.Interfaces;
+using MMGT.API.Services.Interfaces;
 using MMGT.API.DTOs.Application;
 using MMGT.API.DTOs;
 using MMGT.API.Data;
@@ -485,7 +485,7 @@ namespace MMGT.API.Services
                     FirstName = request.FirstName,
                     MiddleName = request.MiddleName,
                     LastName = request.LastName,
-                    PhoneNumber = request.PhoneNumber,
+                    PhoneNumber = MMGT.API.Services.PhoneNumberNormalizer.Normalize(request.PhoneNumber),
                     RsaPin = request.RsaPin,
                     EquityValue = request.EquityValue,
                     SupplementaryValue = request.SupplementaryValue,
@@ -686,7 +686,7 @@ namespace MMGT.API.Services
             app.FirstName = request.FirstName ?? app.FirstName;
             app.MiddleName = request.MiddleName ?? app.MiddleName;
             app.LastName = request.LastName ?? app.LastName;
-            app.PhoneNumber = request.PhoneNumber ?? app.PhoneNumber;
+            app.PhoneNumber = request.PhoneNumber == null ? app.PhoneNumber : MMGT.API.Services.PhoneNumberNormalizer.Normalize(request.PhoneNumber);
             app.RsaPin = request.RsaPin ?? app.RsaPin;
             app.EquityValue = request.EquityValue ?? app.EquityValue;
             app.SupplementaryValue = request.SupplementaryValue ?? app.SupplementaryValue;

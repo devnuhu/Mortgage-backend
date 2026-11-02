@@ -14,7 +14,20 @@ namespace MMGT.API.DTOs.Application
         public string? LastName { get; set; }
 
         [MaxLength(20)]
-        public string? PhoneNumber { get; set; }
+        [System.ComponentModel.DataAnnotations.RegularExpression(@"^(\+?234[789]\d{9}|0[789]\d{9}|[789]\d{9})$",
+            ErrorMessage = "Phone number must be a valid Nigerian mobile number with all its digits: 08012345678, 8012345678, 2348012345678 or +2348012345678")]
+        public string? PhoneNumber
+        {
+            get => _phoneNumber;
+            set
+            {
+                if (value == null) { _phoneNumber = null; return; }
+                var cleaned = MMGT.API.Services.PhoneNumberNormalizer.Clean(value);
+                _phoneNumber = cleaned.Length == 0 ? null : cleaned;
+            }
+        }
+
+        private string? _phoneNumber;
 
         [MaxLength(15)]
         public string? RsaPin { get; set; }
