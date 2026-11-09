@@ -1,50 +1,18 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text;
 
 namespace MMGT.API.DTOs.Application
 {
     public class CreateApplicationRequest
     {
-        [Required]
-        [MaxLength(100)]
+        // Name and phone number are taken from the RSA record in CPAS when the application is created.
+        // They are still accepted here so older screens keep working, but the values sent are ignored.
         public string FirstName { get; set; } = string.Empty;
 
-        [MaxLength(100)]
         public string? MiddleName { get; set; }
 
-        [Required]
-        [MaxLength(100)]
         public string LastName { get; set; } = string.Empty;
 
-        private string _phoneNumber = string.Empty;
-
-        /// <summary>
-        /// Borrower phone number - REQUIRED for SMS notifications.
-        /// Spaces, dashes, dots and brackets are removed first (browsers often autofill numbers with them).
-        /// Accepted formats: +2348012345678, 2348012345678, 08012345678, 8012345678 (10 digits).
-        /// SMS output format: 2348012345678 (standardized)
-        /// </summary>
-        [Required(ErrorMessage = "Phone number is required for SMS notifications")]
-        [RegularExpression(@"^(\+?234[789]\d{9}|0[789]\d{9}|[789]\d{9})$",
-            ErrorMessage = "Phone number must be a valid Nigerian mobile number with all its digits: 08012345678, 8012345678, 2348012345678 or +2348012345678")]
-        [MaxLength(20)]
-        public string PhoneNumber
-        {
-            get => _phoneNumber;
-            set => _phoneNumber = CleanPhone(value);
-        }
-
-        private static string CleanPhone(string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-            var sb = new StringBuilder();
-            foreach (var c in value.Trim())
-            {
-                if (c >= '0' && c <= '9') sb.Append(c);
-                else if (c == '+' && sb.Length == 0) sb.Append(c);
-            }
-            return sb.ToString();
-        }
+        public string PhoneNumber { get; set; } = string.Empty;
 
         [Required]
         [MaxLength(15)]

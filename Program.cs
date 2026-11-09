@@ -137,6 +137,7 @@ builder.Services.AddScoped<IReviewerPerformanceService, ReviewerPerformanceServi
 builder.Services.AddScoped<IEscalationService, EscalationService>();
 
 // Services that depend on Performance services
+builder.Services.AddHttpClient<ICpasBiodataService, CpasBiodataService>();
 builder.Services.AddScoped<IApplicationService, ApplicationService>();
 builder.Services.AddScoped<IFileService, FileService>();
 builder.Services.AddScoped<IReportService, ReportService>();

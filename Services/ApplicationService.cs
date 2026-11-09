@@ -16,19 +16,22 @@ namespace MMGT.API.Services
         private readonly IReviewerAssignmentService _assignmentService;
         private readonly ISmsService _smsService;
         private readonly ILogger<ApplicationService> _logger;
+        private readonly ICpasBiodataService _cpas;
 
         public ApplicationService(
             ApplicationDbContext context,
             IEmailService emailService,
             IReviewerAssignmentService assignmentService,
             ISmsService smsService,
-            ILogger<ApplicationService> logger)
+            ILogger<ApplicationService> logger,
+            ICpasBiodataService cpasBiodataService)
         {
             _context = context;
             _emailService = emailService;
             _assignmentService = assignmentService;
             _smsService = smsService;
             _logger = logger;
+            _cpas = cpasBiodataService;
         }
 
         private static string NormalizeStatus(string? status)
@@ -466,6 +469,10 @@ namespace MMGT.API.Services
                 }
                 // ===== END NEW VALIDATION =====
 
+                // Name and phone number come from the RSA record in CPAS, never from the form.
+                // If CPAS cannot be reached or has no record, this stops here and the application is not created.
+                var biodata = await _cpas.GetBiodataAsync(request.RsaPin);
+
                 var user = await _context.Users
                     .Include(u => u.PMICompany)
                     .FirstOrDefaultAsync(u => u.Id == userId);
@@ -482,10 +489,10 @@ namespace MMGT.API.Services
                     ApplicationNumber = GenerateApplicationNumber(),
                     Status = "draft",
                     Priority = "medium",
-                    FirstName = request.FirstName,
-                    MiddleName = request.MiddleName,
-                    LastName = request.LastName,
-                    PhoneNumber = MMGT.API.Services.PhoneNumberNormalizer.Normalize(request.PhoneNumber),
+                    FirstName = biodata.FirstName,
+                    MiddleName = biodata.MiddleName,
+                    LastName = biodata.LastName,
+                    PhoneNumber = biodata.PhoneNumber,
                     RsaPin = request.RsaPin,
                     EquityValue = request.EquityValue,
                     SupplementaryValue = request.SupplementaryValue,
@@ -683,10 +690,15 @@ namespace MMGT.API.Services
                 throw new Exception("Only draft, rejected or resubmitted applications can be edited");
 
             // Apply allowed updates
-            app.FirstName = request.FirstName ?? app.FirstName;
-            app.MiddleName = request.MiddleName ?? app.MiddleName;
-            app.LastName = request.LastName ?? app.LastName;
-            app.PhoneNumber = request.PhoneNumber == null ? app.PhoneNumber : MMGT.API.Services.PhoneNumberNormalizer.Normalize(request.PhoneNumber);
+            // Name and phone number come from the RSA record and are never changed after the application is created.
+            // The fields stay in the request so older screens keep working; their values are ignored here.
+            if ((request.FirstName != null && request.FirstName != app.FirstName) ||
+                (request.MiddleName != null && request.MiddleName != app.MiddleName) ||
+                (request.LastName != null && request.LastName != app.LastName) ||
+                (request.PhoneNumber != null && request.PhoneNumber != app.PhoneNumber))
+            {
+                _logger.LogWarning("[UPDATE] Ignored an attempt to change name or phone number on application {ApplicationNumber}", app.ApplicationNumber);
+            }
             app.RsaPin = request.RsaPin ?? app.RsaPin;
             app.EquityValue = request.EquityValue ?? app.EquityValue;
             app.SupplementaryValue = request.SupplementaryValue ?? app.SupplementaryValue;
