@@ -21,6 +21,15 @@ namespace MMGT.API.Services
             _context = context;
         }
 
+        // An assigned reviewer (ADMIN) may review only applications assigned to them. Lead Reviewer and Super Admin may review any.
+        private async Task EnsureMayReviewAsync(Guid applicationId, MMGT.API.Models.User reviewer)
+        {
+            if (reviewer.Role == "LEAD_REVIEWER" || reviewer.Role == "SUPER_ADMIN")
+                throw new InvalidOperationException("Lead Reviewers and Super Admins oversee applications and do not review documents. The assigned reviewer does.");
+            var mine = await _context.ApplicationAssignments.AnyAsync(a => a.ApplicationId == applicationId && a.ReviewerId == reviewer.Id && a.IsActive);
+            if (!mine) throw new InvalidOperationException("This application is not assigned to you, so you cannot review its documents.");
+        }
+        
         public async Task<ApplicationDocument> ApproveDocumentAsync(Guid documentId, Guid reviewerId, string? comments)
         {
             var doc = await _context.ApplicationDocuments
@@ -28,27 +37,20 @@ namespace MMGT.API.Services
                 .FirstOrDefaultAsync(d => d.Id == documentId);
 
             if (doc == null) throw new InvalidOperationException("Document not found");
+            await ApplicationLockGuard.EnsureOpenAsync(_context, doc.ApplicationId);
 
             var reviewer = await _context.Users.FindAsync(reviewerId);
-            if (reviewer == null || !reviewer.IsActive || (reviewer.Role != "ADMIN" && reviewer.Role != "LEAD_REVIEWER"))
+            if (reviewer == null || !reviewer.IsActive || (reviewer.Role != "ADMIN" && reviewer.Role != "LEAD_REVIEWER" && reviewer.Role != "SUPER_ADMIN"))
                 throw new InvalidOperationException("Reviewer not found or not authorized");
+            await EnsureMayReviewAsync(doc.ApplicationId, reviewer);
 
-            // Mark other versions as not latest
-            var others = await _context.ApplicationDocuments
-                .Where(d => d.ApplicationId == doc.ApplicationId && d.DocumentTypeId == doc.DocumentTypeId && d.Id != doc.Id && d.IsLatestVersion)
-                .ToListAsync();
 
-            foreach (var o in others)
-            {
-                o.IsLatestVersion = false;
-                _context.ApplicationDocuments.Update(o);
-            }
-
+            if (comments != null && comments.Trim().Length > 500) throw new InvalidOperationException("The comment must be 500 characters or fewer.");
             doc.ReviewStatus = "Approved";
-            doc.ReviewComments = comments;
+            doc.ReviewComments = string.IsNullOrWhiteSpace(comments) ? null : comments.Trim();
             doc.ReviewedBy = reviewerId;
             doc.ReviewedAt = DateTime.UtcNow;
-            doc.IsLatestVersion = true;
+            await DocumentAudit.AddEventAsync(_context, doc.ApplicationId, doc, "Approved", reviewerId, doc.ReviewComments);
 
             _context.ApplicationDocuments.Update(doc);
             await _context.SaveChangesAsync();
@@ -66,15 +68,21 @@ namespace MMGT.API.Services
                 .FirstOrDefaultAsync(d => d.Id == documentId);
 
             if (doc == null) throw new InvalidOperationException("Document not found");
+            await ApplicationLockGuard.EnsureOpenAsync(_context, doc.ApplicationId);
 
             var reviewer = await _context.Users.FindAsync(reviewerId);
-            if (reviewer == null || !reviewer.IsActive || (reviewer.Role != "ADMIN" && reviewer.Role != "LEAD_REVIEWER"))
+            if (reviewer == null || !reviewer.IsActive || (reviewer.Role != "ADMIN" && reviewer.Role != "LEAD_REVIEWER" && reviewer.Role != "SUPER_ADMIN"))
                 throw new InvalidOperationException("Reviewer not found or not authorized");
+            await EnsureMayReviewAsync(doc.ApplicationId, reviewer);
 
+            var rejectReason = (comments ?? string.Empty).Trim();
+            if (rejectReason.Length == 0) throw new InvalidOperationException("A comment is required when rejecting a document, so the client knows what to fix.");
+            if (rejectReason.Length > 500) throw new InvalidOperationException("The comment must be 500 characters or fewer.");
             doc.ReviewStatus = "Rejected";
-            doc.ReviewComments = comments;
+            doc.ReviewComments = rejectReason;
             doc.ReviewedBy = reviewerId;
             doc.ReviewedAt = DateTime.UtcNow;
+            await DocumentAudit.AddEventAsync(_context, doc.ApplicationId, doc, "Rejected", reviewerId, rejectReason);
 
             _context.ApplicationDocuments.Update(doc);
             await _context.SaveChangesAsync();
@@ -92,15 +100,21 @@ namespace MMGT.API.Services
                 .FirstOrDefaultAsync(d => d.Id == documentId);
 
             if (doc == null) throw new InvalidOperationException("Document not found");
+            await ApplicationLockGuard.EnsureOpenAsync(_context, doc.ApplicationId);
 
             var reviewer = await _context.Users.FindAsync(reviewerId);
-            if (reviewer == null || !reviewer.IsActive || (reviewer.Role != "ADMIN" && reviewer.Role != "LEAD_REVIEWER"))
+            if (reviewer == null || !reviewer.IsActive || (reviewer.Role != "ADMIN" && reviewer.Role != "LEAD_REVIEWER" && reviewer.Role != "SUPER_ADMIN"))
                 throw new InvalidOperationException("Reviewer not found or not authorized");
+            await EnsureMayReviewAsync(doc.ApplicationId, reviewer);
 
+            var revisionReason = (comments ?? string.Empty).Trim();
+            if (revisionReason.Length == 0) throw new InvalidOperationException("A comment is required when requesting a revision, so the client knows what to change.");
+            if (revisionReason.Length > 500) throw new InvalidOperationException("The comment must be 500 characters or fewer.");
             doc.ReviewStatus = "RequestedRevision";
-            doc.ReviewComments = comments;
+            doc.ReviewComments = revisionReason;
             doc.ReviewedBy = reviewerId;
             doc.ReviewedAt = DateTime.UtcNow;
+            await DocumentAudit.AddEventAsync(_context, doc.ApplicationId, doc, "RequestedRevision", reviewerId, revisionReason);
 
             _context.ApplicationDocuments.Update(doc);
             await _context.SaveChangesAsync();

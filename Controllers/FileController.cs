@@ -32,10 +32,10 @@ namespace MMGT.API.Controllers
                 if (app.UserId != userId)
                     return Forbid();
 
-                if (app.Status != "rejected" && app.Status != "draft")
+                if (!string.Equals(app.Status, "rejected", StringComparison.OrdinalIgnoreCase) && !string.Equals(app.Status, "draft", StringComparison.OrdinalIgnoreCase))
                     return Forbid(); // allow upload in draft or when rejected
 
-                var response = await _fileService.UploadFileAsync(form.File, form.ApplicationId, form.DocumentType, userId);
+                var response = await _fileService.UploadFileAsync(form.File, form.ApplicationId, form.DocumentType, userId, form.DocumentName);
                 return Ok(response);
             }
             catch (Exception ex)
@@ -60,7 +60,7 @@ namespace MMGT.API.Controllers
                 if (app.UserId != userId)
                     return Forbid();
 
-                if (app.Status != "rejected")
+                if (!string.Equals(app.Status, "rejected", StringComparison.OrdinalIgnoreCase))
                     return Forbid();
 
                 var response = await _fileService.ReplaceFileAsync(form.ExistingFileId, form.File, userId);
@@ -77,6 +77,7 @@ namespace MMGT.API.Controllers
         {
             try
             {
+                if (!await MMGT.API.Services.ApplicationAccessGuard.CanViewDocumentsAsync(HttpContext, applicationId)) return Forbid();
                 var files = await _fileService.GetFilesByApplicationAsync(applicationId);
                 return Ok(files);
             }
@@ -92,6 +93,7 @@ namespace MMGT.API.Controllers
             try
             {
                 var document = await _fileService.GetFileAsync(fileId);
+                if (!await MMGT.API.Services.ApplicationAccessGuard.CanViewDocumentsAsync(HttpContext, document.ApplicationId)) return Forbid();
                 var fileBytes = await _fileService.DownloadFileAsync(fileId);
                 return File(fileBytes, document.FileType, document.FileName);
             }
@@ -117,7 +119,7 @@ namespace MMGT.API.Controllers
 
                 // Allow delete only in draft status - for quick fixes before submission
                 // Use Replace endpoint for rejected applications (formal resubmission)
-                if (app.Status != "draft")
+                if (!string.Equals(app.Status, "draft", StringComparison.OrdinalIgnoreCase))
                     return Forbid();
 
                 var result = await _fileService.DeleteFileAsync(fileId, userId);

@@ -7,7 +7,8 @@ namespace MMGT.API.Services.Interfaces
         Task<MMGT.API.DTOs.Auth.LoginResponse> LoginAsync(MMGT.API.DTOs.Auth.LoginRequest request);
         Task<bool> ChangePasswordAsync(Guid userId, MMGT.API.DTOs.Auth.ChangePasswordRequest request);
         Task<bool> ValidateTokenAsync(string token);
-        Task<AdminResetPasswordResponse> AdminResetPasswordAsync(Guid adminId, Guid targetUserId);
+        Task<AdminResetPasswordResponse> AdminResetPasswordAsync(Guid adminId, Guid targetUserId, bool sendEmail = true);
+        Task ForgotPasswordAsync(string email);
 
         // Role Login Access Control methods
         Task<(bool IsAllowed, string? DisabledMessage)> CheckRoleLoginAccessAsync(string role);

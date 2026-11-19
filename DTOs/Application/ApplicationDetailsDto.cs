@@ -61,6 +61,14 @@ namespace MMGT.API.DTOs.Application
         public DateTime? SubmittedAt { get; set; }
 
         public DateTime UpdatedAt { get; set; }
+        
+        // HNI flag (null = not checked yet)
+        public bool? IsHni { get; set; }
+        public DateTime? HniCheckedAt { get; set; }
+        
+        public bool IsLocked { get; set; }
+        public DateTime? ResubmittedAt { get; set; }
+        public int ResubmissionCount { get; set; }
 
         // Review History
         public List<ReviewHistoryDetailDto> ReviewHistory { get; set; } = new();
@@ -91,6 +99,8 @@ namespace MMGT.API.DTOs.Application
         public DateTime? ReviewedAt { get; set; }
 
         public DateTime UploadedAt { get; set; }
+        
+        public long FileSize { get; set; }
     }
 
     /// <summary>
@@ -119,6 +129,7 @@ namespace MMGT.API.DTOs.Application
     public class ApplicationAssignmentDetailDto
     {
         public Guid Id { get; set; }
+        public Guid ReviewerId { get; set; }
 
         public string ReviewerName { get; set; } = string.Empty;
 

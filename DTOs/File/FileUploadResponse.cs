@@ -7,6 +7,8 @@
         public string FileName { get; set; } = string.Empty;
         public string FileType { get; set; } = string.Empty;
         public string DocumentType { get; set; } = string.Empty;
+        /// <summary>The applicant's own name for an OTHER document (null for every other type). Show this instead of the type name when present.</summary>
+        public string? CustomName { get; set; }
         public long FileSize { get; set; }
         public string FilePath { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }

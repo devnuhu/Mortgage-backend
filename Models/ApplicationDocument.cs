@@ -120,6 +120,10 @@ namespace MMGT.API.Models
         /// </summary>
         [Required]
         public bool IsLegacy { get; set; } = false;
+        
+        /// <summary>For the OTHER document type only: the name the applicant gave this document. NULL for every other type.</summary>
+        [MaxLength(150)]
+        public string? CustomName { get; set; }
 
         // Foreign Keys
         [Required]

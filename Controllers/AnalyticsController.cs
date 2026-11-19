@@ -48,7 +48,7 @@ namespace MMGT.API.Controllers
         /// Get performance metrics for a specific reviewer
         /// </summary>
         [HttpGet("reviewer/{reviewerId}/performance")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<ReviewerPerformanceMetricsDto>> GetReviewerPerformance(Guid reviewerId)
         {
             try
@@ -66,7 +66,7 @@ namespace MMGT.API.Controllers
         /// Get performance metrics for all reviewers
         /// </summary>
         [HttpGet("performance/all")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<List<ReviewerPerformanceMetricsDto>>> GetAllReviewersPerformance()
         {
             try
@@ -84,7 +84,7 @@ namespace MMGT.API.Controllers
         /// Get top performing reviewers
         /// </summary>
         [HttpGet("performance/top")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<List<ReviewerPerformanceMetricsDto>>> GetTopPerformers([FromQuery] int count = 5)
         {
             try
@@ -102,7 +102,7 @@ namespace MMGT.API.Controllers
         /// Get bottom performing reviewers
         /// </summary>
         [HttpGet("performance/bottom")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<List<ReviewerPerformanceMetricsDto>>> GetBottomPerformers([FromQuery] int count = 5)
         {
             try
@@ -120,7 +120,7 @@ namespace MMGT.API.Controllers
         /// Get average turnaround time for a reviewer (last N days)
         /// </summary>
         [HttpGet("reviewer/{reviewerId}/turnaround-time")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<object>> GetReviewerTurnaroundTime(Guid reviewerId, [FromQuery] int days = 30)
         {
             try
@@ -184,7 +184,7 @@ namespace MMGT.API.Controllers
         /// Get workload distribution across all reviewers (summary view)
         /// </summary>
         [HttpGet("workload/distribution")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<WorkloadDistributionSummaryDto>> GetWorkloadDistribution()
         {
             try
@@ -203,7 +203,7 @@ namespace MMGT.API.Controllers
         /// Supports sorting by: reviewername, workload, activeassignments, approvalrate, turnaroundtime, performancerating
         /// </summary>
         [HttpGet("reviewers/workload")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<PaginatedWorkloadDistributionDto>> GetReviewersWorkloadPaged(
             [FromQuery] int pageNumber = 1,
             [FromQuery] int pageSize = 25,
@@ -370,7 +370,7 @@ namespace MMGT.API.Controllers
         /// Get all active escalations
         /// </summary>
         [HttpGet("escalations/active")]
-        [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<List<AssignmentEscalationDto>>> GetActiveEscalations()
         {
             try
@@ -388,7 +388,7 @@ namespace MMGT.API.Controllers
         /// Get escalations for a specific reviewer
         /// </summary>
         [HttpGet("escalations/reviewer/{reviewerId}")]
-        [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<List<AssignmentEscalationDto>>> GetReviewerEscalations(Guid reviewerId)
         {
             try
@@ -475,7 +475,7 @@ namespace MMGT.API.Controllers
                 if (string.IsNullOrEmpty(request.Reason))
                     return BadRequest(new { message = "Reassignment reason is required" });
 
-                var result = await _escalationService.ReassignApplicationAsync(assignmentId, request.NewReviewerId, request.Reason);
+                var result = await _escalationService.ReassignApplicationAsync(assignmentId, request.NewReviewerId, request.Reason, Guid.TryParse(User.FindFirst("UserId")?.Value, out var reassignedById) ? reassignedById : (Guid?)null);
 
                 if (!result)
                     return BadRequest(new { message = "Failed to reassign assignment. Verify the assignment and reviewer exist." });
@@ -506,7 +506,7 @@ namespace MMGT.API.Controllers
                 if (string.IsNullOrEmpty(request.Reason))
                     return BadRequest(new { message = "Reassignment reason is required" });
 
-                var result = await _escalationService.ReassignMultipleApplicationsAsync(request.AssignmentIds, request.NewReviewerId, request.Reason);
+                var result = await _escalationService.ReassignMultipleApplicationsAsync(request.AssignmentIds, request.NewReviewerId, request.Reason, Guid.TryParse(User.FindFirst("UserId")?.Value, out var bulkById) ? bulkById : (Guid?)null);
 
                 if (!result)
                     return BadRequest(new { message = "Failed to reassign applications. Verify the assignments and reviewer exist." });
@@ -528,7 +528,7 @@ namespace MMGT.API.Controllers
         /// Lead Reviewers use this to see what Admin user has each application and for how long
         /// </summary>
         [HttpGet("applications/for-bulk-reassignment")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<PaginatedApplicationWithAssignmentDto>> GetApplicationsForBulkReassignment(
             [FromQuery] int pageNumber = 1,
             [FromQuery] int pageSize = 25,
@@ -541,7 +541,13 @@ namespace MMGT.API.Controllers
             [FromQuery] DateTime? createdDateFrom = null,
             [FromQuery] DateTime? createdDateTo = null,
             [FromQuery] DateTime? submittedDateFrom = null,
-            [FromQuery] DateTime? submittedDateTo = null)
+            [FromQuery] DateTime? submittedDateTo = null,
+            [FromQuery] DateTime? createdFromDate = null,
+            [FromQuery] DateTime? createdToDate = null,
+            [FromQuery] DateTime? submittedFromDate = null,
+            [FromQuery] DateTime? submittedToDate = null,
+            [FromQuery] bool? isHni = null,
+            [FromQuery] bool includeDecided = false)
         {
             try
             {
@@ -554,10 +560,12 @@ namespace MMGT.API.Controllers
                     applicationStatus,
                     rsaPin,
                     applicationNumber,
-                    createdDateFrom,
-                    createdDateTo,
-                    submittedDateFrom,
-                    submittedDateTo);
+                    createdDateFrom ?? createdFromDate,
+                    createdDateTo ?? createdToDate,
+                    submittedDateFrom ?? submittedFromDate,
+                    submittedDateTo ?? submittedToDate,
+                    isHni,
+                    includeDecided);
                 return Ok(result);
             }
             catch (Exception ex)
@@ -574,7 +582,7 @@ namespace MMGT.API.Controllers
         /// Get workload balancing suggestions (rebalancing recommendations)
         /// </summary>
         [HttpGet("workload/suggestions")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult> GetWorkloadBalancingSuggestions()
         {
             try
@@ -817,7 +825,7 @@ namespace MMGT.API.Controllers
         /// Execute reassignments based on predefined criteria (auto-reassignment)
         /// </summary>
         [HttpPost("applications/reassign-by-criteria")]
-        [Authorize(Roles = "ADMIN,SUPER_ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult> ReassignByCriteria([FromBody] ReassignmentCriteriaRequest request)
         {
             try
@@ -832,13 +840,15 @@ namespace MMGT.API.Controllers
                     TargetWorkloadMaxPercentage = request.TargetWorkloadMaxPercentage,
                     PrioritizeHighPerformers = request.PrioritizeHighPerformers,
                     MinimumApprovalRatePercentage = request.MinimumApprovalRatePercentage,
-                    MaxReassignments = request.MaxReassignments
+                    MaxReassignments = request.MaxReassignments,
+                    MaxDifference = request.MaxDifference,
+                    PreviewOnly = request.PreviewOnly
                 };
 
-                var results = await _criteriaBasedReassignmentService.ExecuteReassignmentsByCriteriaAsync(criteria);
+                var results = await _criteriaBasedReassignmentService.ExecuteReassignmentsByCriteriaAsync(criteria, Guid.TryParse(User.FindFirst("UserId")?.Value, out var performedById) ? performedById : (Guid?)null);
                 return Ok(new 
                 { 
-                    message = $"Executed {results.Count} reassignment(s) based on criteria",
+                    message = request.PreviewOnly ? $"Preview: {results.Count} reassignment(s) would be made" : $"Executed {results.Count} reassignment(s) based on criteria",
                     reassignments = results 
                 });
             }
@@ -852,12 +862,12 @@ namespace MMGT.API.Controllers
         /// Auto-balance workload across all reviewers
         /// </summary>
         [HttpPost("applications/auto-balance-workload")]
-        [Authorize(Roles = "ADMIN,SUPER_ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult> AutoBalanceWorkload()
         {
             try
             {
-                var results = await _criteriaBasedReassignmentService.AutoBalanceWorkloadAsync();
+                var results = await _criteriaBasedReassignmentService.AutoBalanceWorkloadAsync(Guid.TryParse(User.FindFirst("UserId")?.Value, out var autoById) ? autoById : (Guid?)null);
                 return Ok(new 
                 { 
                     message = $"Auto-balanced workload with {results.Count} reassignment(s)",
@@ -874,7 +884,7 @@ namespace MMGT.API.Controllers
         /// Get reassignment history/audit logs (recent reassignments)
         /// </summary>
         [HttpGet("reassignments/history")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult> GetReassignmentHistory([FromQuery] int days = 30, [FromQuery] int pageSize = 100)
         {
             try
@@ -892,7 +902,7 @@ namespace MMGT.API.Controllers
         /// Get reassignment history for a specific reviewer
         /// </summary>
         [HttpGet("reassignments/history/reviewer/{reviewerId}")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult> GetReviewerReassignmentHistory(Guid reviewerId, [FromQuery] int days = 30)
         {
             try
@@ -910,7 +920,7 @@ namespace MMGT.API.Controllers
         /// Get reassignment metrics and audit statistics
         /// </summary>
         [HttpGet("reassignments/metrics")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult> GetReassignmentMetrics()
         {
             try
@@ -933,7 +943,7 @@ namespace MMGT.API.Controllers
         /// Provides detailed audit trail of time investment per application.
         /// </summary>
         [HttpGet("applications/{applicationId}/hours-by-reviewer")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<List<ApplicationHoursTrackingDto>>> GetApplicationHoursTracking(Guid applicationId)
         {
             try
@@ -974,7 +984,7 @@ namespace MMGT.API.Controllers
         /// Quick endpoint for dashboard display of total hours and statistics.
         /// </summary>
         [HttpGet("reviewer/{reviewerId}/hours-summary")]
-        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
         public async Task<ActionResult<object>> GetReviewerHoursSummary(
             Guid reviewerId,
             [FromQuery] DateTime? dateFrom = null,

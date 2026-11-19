@@ -142,13 +142,16 @@ namespace MMGT.API.Services
                     : 0.0;
 
                 // Get document review statistics
-                var reviewedDocuments = await _context.ApplicationDocuments
+                // Counted in the database: whole documents (with their files) are never loaded for this.
+                var reviewedStatuses = await _context.ApplicationDocuments.AsNoTracking()
                     .Where(d => d.ReviewedBy == reviewerId)
+                    .GroupBy(d => d.ReviewStatus)
+                    .Select(g => new { Status = g.Key, Count = g.Count() })
                     .ToListAsync();
-
-                var approved = reviewedDocuments.Count(d => d.ReviewStatus == "approved");
-                var rejected = reviewedDocuments.Count(d => d.ReviewStatus == "rejected");
-                var revisionRequested = reviewedDocuments.Count(d => d.ReviewStatus == "revision_requested");
+                int CountStatus(params string[] names) => reviewedStatuses.Where(s => names.Any(n => string.Equals(s.Status, n, StringComparison.OrdinalIgnoreCase))).Sum(s => s.Count);
+                var approved = CountStatus("approved");
+                var rejected = CountStatus("rejected");
+                var revisionRequested = CountStatus("revision_requested", "requestedrevision");
 
                 var totalReviewed = approved + rejected + revisionRequested;
                 var approvalRate = totalReviewed > 0 ? (approved * 100.0 / totalReviewed) : 0.0;
@@ -811,6 +814,7 @@ namespace MMGT.API.Services
                 NewReviewerId = h.NewReviewerId,
                 NewReviewerName = h.NewReviewer?.FirstName + " " + h.NewReviewer?.LastName,
                 ReassignmentReason = h.ReassignmentReason,
+                Category = ReassignmentCategory(h.ReassignmentReason),
                 ReassignmentDetails = h.ReassignmentDetails,
                 ReassignedByUserId = h.ReassignedByUserId,
                 ReassignedByUserName = h.ReassignedByUser != null ? (h.ReassignedByUser.FirstName + " " + h.ReassignedByUser.LastName) : "System",
@@ -850,6 +854,7 @@ namespace MMGT.API.Services
                 NewReviewerId = h.NewReviewerId,
                 NewReviewerName = h.NewReviewer?.FirstName + " " + h.NewReviewer?.LastName,
                 ReassignmentReason = h.ReassignmentReason,
+                Category = ReassignmentCategory(h.ReassignmentReason),
                 ReassignmentDetails = h.ReassignmentDetails,
                 ReassignedByUserId = h.ReassignedByUserId,
                 ReassignedByUserName = h.ReassignedByUser != null ? (h.ReassignedByUser.FirstName + " " + h.ReassignedByUser.LastName) : "System",
@@ -860,6 +865,38 @@ namespace MMGT.API.Services
             }).ToList();
         }
 
+        // Reassignment classification: a system code (balancing, unavailable, performance) or free text typed by a person.
+        private static string ReassignmentCategory(string? reason)
+        {
+            var r = (reason ?? string.Empty).Trim();
+            if (r.Equals("AvailabilityChange", StringComparison.OrdinalIgnoreCase)) return "Reviewer unavailable";
+            if (r.Equals("CriteriaBased", StringComparison.OrdinalIgnoreCase) || r.Equals("AutoBalance", StringComparison.OrdinalIgnoreCase)) return "Workload balancing";
+            if (r.Equals("PerformanceIssue", StringComparison.OrdinalIgnoreCase)) return "Performance";
+            return "Manual";
+        }
+        
+        private static string NormalizeReason(string? reason)
+        {
+            var r = string.Join(" ", (reason ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            if (r.Length == 0) return "No reason given";
+            return char.ToUpperInvariant(r[0]) + r.Substring(1).ToLowerInvariant();
+        }
+        
+        private static Dictionary<string, int> TopReasons(IEnumerable<string?> reasons, int keep = 8)
+        {
+            var counts = reasons
+                .Select(r => { var c = ReassignmentCategory(r); return c == "Manual" ? NormalizeReason(r) : c; })
+                .GroupBy(x => x)
+                .Select(g => new { g.Key, N = g.Count() })
+                .OrderByDescending(x => x.N)
+                .ToList();
+            var result = new Dictionary<string, int>();
+            foreach (var x in counts.Take(keep)) result[x.Key] = x.N;
+            var other = counts.Skip(keep).Sum(x => x.N);
+            if (other > 0) result["Other"] = other;
+            return result;
+        }
+        
         /// <summary>
         /// Get reassignment audit metrics and statistics
         /// </summary>
@@ -875,14 +912,13 @@ namespace MMGT.API.Services
             var metrics = new ReassignmentAuditMetricsDto
             {
                 TotalReassignments = allReassignments.Count,
-                ManualReassignments = allReassignments.Count(h => h.ReassignedByUserId != null),
-                AutomaticReassignments = allReassignments.Count(h => h.ReassignedByUserId == null),
+                ManualReassignments = allReassignments.Count(h => ReassignmentCategory(h.ReassignmentReason) == "Manual"),
+                AutomaticReassignments = allReassignments.Count(h => ReassignmentCategory(h.ReassignmentReason) != "Manual"),
                 ReassignmentsFromUnavailability = allReassignments.Count(h => h.ReassignmentReason == "AvailabilityChange"),
                 WorkloadBalancingReassignments = allReassignments.Count(h => h.ReassignmentReason == "CriteriaBased" || h.ReassignmentReason == "AutoBalance"),
                 PerformanceIssueReassignments = allReassignments.Count(h => h.ReassignmentReason == "PerformanceIssue"),
-                ReassignmentsByReason = allReassignments
-                    .GroupBy(h => h.ReassignmentReason)
-                    .ToDictionary(g => g.Key, g => g.Count()),
+                ReassignmentsByReason = TopReasons(allReassignments.Select(h => (string?)h.ReassignmentReason)),
+                ReassignmentsByCategory = allReassignments.GroupBy(h => ReassignmentCategory(h.ReassignmentReason)).ToDictionary(g => g.Key, g => g.Count()),
                 RecentReassignments = allReassignments
                     .OrderByDescending(h => h.ReassignedAt)
                     .Take(10)
@@ -895,6 +931,7 @@ namespace MMGT.API.Services
                         NewReviewerId = h.NewReviewerId,
                         NewReviewerName = h.NewReviewer?.FirstName + " " + h.NewReviewer?.LastName,
                         ReassignmentReason = h.ReassignmentReason,
+                Category = ReassignmentCategory(h.ReassignmentReason),
                         ReassignedAt = h.ReassignedAt
                     }).ToList()
             };
@@ -906,7 +943,7 @@ namespace MMGT.API.Services
 
             if (metrics.TotalReassignments > 0 && metrics.ReassignmentCountByReviewer.Count > 0)
             {
-                metrics.AverageReassignmentsPerReviewer = (double)metrics.TotalReassignments / metrics.ReassignmentCountByReviewer.Count;
+                metrics.AverageReassignmentsPerReviewer = Math.Round((double)metrics.TotalReassignments / metrics.ReassignmentCountByReviewer.Count, 1);
             }
 
             return metrics;

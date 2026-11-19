@@ -167,6 +167,9 @@ namespace MMGT.API.Services
                 if (!reviewers.Any())
                 {
                     _logger.LogError($"[AUTO-ASSIGN-SERVICE] ✗ No available ADMIN reviewers found! All reviewers may be Unavailable or OnLeave.");
+                    // Put the previous assignments back, so the application is not left with no owner.
+                    foreach (var previousAssignment in previousAssignments) { previousAssignment.IsActive = true; }
+                    await _context.SaveChangesAsync();
                     throw new InvalidOperationException("No available ADMIN reviewers found. All reviewers are currently Unavailable or OnLeave. Please mark at least one reviewer as Available.");
                 }
 
@@ -177,7 +180,7 @@ namespace MMGT.API.Services
                 foreach (var reviewer in reviewers)
                 {
                     var workload = await _context.ApplicationAssignments
-                        .Where(a => a.ReviewerId == reviewer.Id && a.IsActive)
+                        .Where(a => a.ReviewerId == reviewer.Id).Where(OpenWorkload.Open)
                         .CountAsync();
                     reviewerWorkloads[reviewer.Id] = workload;
                     _logger.LogInformation($"[AUTO-ASSIGN-SERVICE] Reviewer {reviewer.FirstName} {reviewer.LastName} ({reviewer.Email}): {workload} active assignments");
@@ -187,7 +190,7 @@ namespace MMGT.API.Services
                 _logger.LogInformation($"[AUTO-ASSIGN-SERVICE] Selecting reviewer with lowest workload (max: {maxAssignments})...");
                 var selectedReviewerId = reviewerWorkloads
                     .Where(kvp => kvp.Value < maxAssignments)
-                    .OrderBy(kvp => kvp.Value)
+                    .OrderBy(kvp => kvp.Value).ThenBy(kvp => Guid.NewGuid())
                     .FirstOrDefault()
                     .Key;
 
@@ -196,7 +199,7 @@ namespace MMGT.API.Services
                 {
                     _logger.LogWarning($"[AUTO-ASSIGN-SERVICE] All reviewers at/over max ({maxAssignments}). Selecting lowest workload anyway.");
                     selectedReviewerId = reviewerWorkloads
-                        .OrderBy(kvp => kvp.Value)
+                        .OrderBy(kvp => kvp.Value).ThenBy(kvp => Guid.NewGuid())
                         .First()
                         .Key;
                 }
@@ -266,6 +269,7 @@ namespace MMGT.API.Services
                 throw new InvalidOperationException($"Application with ID '{applicationId}' not found");
             }
 
+            ApplicationLockGuard.EnsureOpen(application);
             var reviewer = await _context.Users.FindAsync(reviewerId);
             if (reviewer == null || !reviewer.IsActive)
             {
@@ -333,6 +337,7 @@ namespace MMGT.API.Services
                 throw new InvalidOperationException($"Application with ID '{applicationId}' not found");
             }
 
+            ApplicationLockGuard.EnsureOpen(application);
             var newReviewer = await _context.Users.FindAsync(newReviewerId);
             if (newReviewer == null || !newReviewer.IsActive)
             {
@@ -477,7 +482,7 @@ namespace MMGT.API.Services
                 var query = _context.Applications.AsNoTracking();
 
                 // CRITICAL: Exclude draft applications - only show submitted/under review applications
-                query = query.Where(a => a.Status != "draft");
+                query = query.Where(a => a.Status != "draft" && a.Status != "expired");
 
                 // Optional filters (dynamic composition)
                 if (!string.IsNullOrEmpty(applicationStatus))
@@ -653,6 +658,14 @@ namespace MMGT.API.Services
                 var applications = await _context.Applications
                     .Where(a => idSet.Contains(a.Id))
                     .ToListAsync();
+                // Applications locked by a step-down request are skipped (stepped-down ones are already hidden by the query filter)
+                var lockedIds = applications.Where(a => a.IsLocked).Select(a => a.Id).ToList();
+                if (lockedIds.Count > 0)
+                {
+                    response.SkippedApplicationIds.AddRange(lockedIds);
+                    response.Messages.Add($"Skipping {lockedIds.Count} locked application(s): a step-down request is in progress");
+                    applications = applications.Where(a => !a.IsLocked).ToList();
+                }
 
                 if (!applications.Any())
                 {
@@ -764,7 +777,7 @@ namespace MMGT.API.Services
         public async Task<int> GetReviewerWorkloadAsync(Guid reviewerId)
         {
             return await _context.ApplicationAssignments
-                .Where(a => a.ReviewerId == reviewerId && a.IsActive)
+                .Where(a => a.ReviewerId == reviewerId).Where(OpenWorkload.Open)
                 .CountAsync();
         }
     }

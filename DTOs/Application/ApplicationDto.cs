@@ -49,5 +49,9 @@
         public string? AssignedReviewerName { get; set; }
         public string? AssignedReviewerEmail { get; set; }
         public DateTime? AssignedAt { get; set; }
+        
+        // HNI flag (null = not checked yet)
+        public bool? IsHni { get; set; }
+        public DateTime? HniCheckedAt { get; set; }
     }
 }

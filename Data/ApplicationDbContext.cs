@@ -13,6 +13,7 @@ namespace MMGT.API.Data
         public DbSet<User> Users { get; set; }
         public DbSet<PMICompany> PMICompanies { get; set; }
         public DbSet<Application> Applications { get; set; }
+        public DbSet<MMGT.API.Models.UserNotification> Notifications { get; set; } = null!;
         public DbSet<ApplicationDocument> ApplicationDocuments { get; set; }
         public DbSet<ApplicationReviewHistory> ApplicationReviewHistory { get; set; }
         public DbSet<ApplicationDocumentHistory> ApplicationDocumentHistory { get; set; }
@@ -26,6 +27,12 @@ namespace MMGT.API.Data
         public DbSet<ReviewerAvailability> ReviewerAvailabilities { get; set; }
         public DbSet<ReassignmentHistory> ReassignmentHistories { get; set; }
         public DbSet<RoleLoginAccessControl> RoleLoginAccessControls { get; set; }
+        public DbSet<ApplicationStepDownRequest> ApplicationStepDownRequests { get; set; }
+        public DbSet<ApplicationStepDownAudit> ApplicationStepDownAudits { get; set; }
+        public DbSet<ApplicationStepDownLetter> ApplicationStepDownLetters { get; set; }
+        public DbSet<ApplicationDocumentEvent> ApplicationDocumentEvents { get; set; }
+        public DbSet<ApplicationHniCheck> ApplicationHniChecks { get; set; }
+        public DbSet<ApplicationDocumentVersion> ApplicationDocumentVersions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -108,6 +115,9 @@ namespace MMGT.API.Data
                     .HasForeignKey(e => e.PmiCompanyId)
                     .OnDelete(DeleteBehavior.Restrict);
 
+                // Soft delete: archived (stepped down) applications are hidden from every normal query.
+                // Code that must see them (restore, audit) uses IgnoreQueryFilters().
+                entity.HasQueryFilter(a => !a.IsArchived);
                 // RsaPin must be globally unique - can NEVER be reused
                 // Unique constraint enforced at application level by CheckRsaPinExistsAsync
                 // entity.HasIndex(e => e.RsaPin).IsUnique();
@@ -119,6 +129,91 @@ namespace MMGT.API.Data
                 entity.HasIndex(e => e.CreatedAt).IsDescending(true);
             });
 
+            // Step-down requests. No navigation to Application on purpose, so requests stay visible
+            // after the application is archived (the Application query filter would otherwise hide them).
+            modelBuilder.Entity<ApplicationStepDownRequest>(entity =>
+            {
+                entity.ToTable("ApplicationStepDownRequests");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Status).IsRequired().HasMaxLength(30);
+                entity.Property(e => e.Reason).IsRequired().HasMaxLength(1000);
+                entity.Property(e => e.PmiCompanyName).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.CancelReason).HasMaxLength(1000);
+                entity.Property(e => e.DecisionComment).HasMaxLength(1000);
+                entity.Property(e => e.ActionComment).HasMaxLength(1000);
+                entity.Property(e => e.RestoreReason).HasMaxLength(1000);
+                entity.Property(e => e.RowVersion).IsRowVersion();
+                entity.HasOne<Application>().WithMany().HasForeignKey(e => e.ApplicationId).OnDelete(DeleteBehavior.Restrict);
+                entity.HasIndex(e => new { e.ApplicationId, e.Status }).HasDatabaseName("IX_StepDownRequests_ApplicationId_Status");
+                entity.HasIndex(e => new { e.Status, e.CreatedAt }).HasDatabaseName("IX_StepDownRequests_Status_CreatedAt");
+                // At most one open request per application
+                entity.HasIndex(e => e.ApplicationId).IsUnique().HasDatabaseName("UX_StepDownRequests_OpenPerApplication")
+                    .HasFilter("[Status] IN ('Draft','Submitted','CancellationRequested','Approved')");
+            });
+
+            modelBuilder.Entity<ApplicationHniCheck>(entity =>
+            {
+                entity.ToTable("ApplicationHniChecks");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Outcome).IsRequired().HasMaxLength(30);
+                entity.Property(e => e.Source).IsRequired().HasMaxLength(20);
+                entity.Property(e => e.Threshold).HasColumnType("decimal(18,2)");
+                entity.HasIndex(e => new { e.ApplicationId, e.CheckedAt }).HasDatabaseName("IX_ApplicationHniChecks_ApplicationId_CheckedAt");
+            });
+            
+            modelBuilder.Entity<ApplicationDocumentEvent>(entity =>
+            {
+                entity.ToTable("ApplicationDocumentEvents");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Action).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.DocumentTypeName).HasMaxLength(200);
+                entity.Property(e => e.PerformedByName).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.PerformedByRole).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.FileName).HasMaxLength(255);
+                entity.Property(e => e.PreviousFileName).HasMaxLength(255);
+                entity.Property(e => e.Comment).HasMaxLength(1000);
+                entity.HasIndex(e => new { e.ApplicationId, e.PerformedAt }).HasDatabaseName("IX_DocumentEvents_ApplicationId_PerformedAt");
+            });
+            
+            modelBuilder.Entity<ApplicationDocumentVersion>(entity =>
+            {
+                entity.ToTable("ApplicationDocumentVersions");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.FileName).IsRequired().HasMaxLength(255);
+                entity.Property(e => e.FileType).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.ReviewStatus).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.ReviewComments).HasMaxLength(500);
+                entity.Property(e => e.ArchiveReason).IsRequired().HasMaxLength(20);
+                entity.HasIndex(e => new { e.ApplicationId, e.DocumentTypeId }).HasDatabaseName("IX_DocumentVersions_ApplicationId_TypeId");
+            });
+            
+            modelBuilder.Entity<ApplicationStepDownLetter>(entity =>
+            {
+                entity.ToTable("ApplicationStepDownLetters");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.FileName).IsRequired().HasMaxLength(260);
+                entity.Property(e => e.ContentType).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.Content).IsRequired();
+                entity.HasIndex(e => e.RequestId).IsUnique().HasDatabaseName("UX_StepDownLetters_RequestId");
+                entity.HasOne<ApplicationStepDownRequest>().WithMany().HasForeignKey(e => e.RequestId).OnDelete(DeleteBehavior.Restrict);
+            });
+            
+            modelBuilder.Entity<ApplicationStepDownAudit>(entity =>
+            {
+                entity.ToTable("ApplicationStepDownAudits");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Action).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.FromStatus).HasMaxLength(30);
+                entity.Property(e => e.ToStatus).HasMaxLength(30);
+                entity.Property(e => e.PerformedByName).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.PerformedByRole).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.Comment).HasMaxLength(1000);
+                entity.Property(e => e.Details).HasMaxLength(500);
+                entity.HasOne<ApplicationStepDownRequest>().WithMany().HasForeignKey(e => e.RequestId).OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne<Application>().WithMany().HasForeignKey(e => e.ApplicationId).OnDelete(DeleteBehavior.Restrict);
+                entity.HasIndex(e => new { e.ApplicationId, e.PerformedAt }).HasDatabaseName("IX_StepDownAudits_ApplicationId_PerformedAt");
+                entity.HasIndex(e => new { e.RequestId, e.PerformedAt }).HasDatabaseName("IX_StepDownAudits_RequestId_PerformedAt");
+            });
             // Configure ApplicationDocument entity
             modelBuilder.Entity<ApplicationDocument>(entity =>
             {
@@ -131,6 +226,8 @@ namespace MMGT.API.Data
                 entity.Property(e => e.CreatedAt).HasDefaultValueSql("GETDATE()");
                 entity.Property(e => e.Version).IsRequired();
                 entity.Property(e => e.IsLatestVersion).IsRequired();
+                // Replaced documents are never returned: only the current (latest) document of each type is visible. Older files live in ApplicationDocumentVersions.
+                entity.HasQueryFilter(d => d.IsLatestVersion);
                 entity.Property(e => e.LegacyDocumentType).HasMaxLength(100);
 
                 // Relationships

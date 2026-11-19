@@ -18,7 +18,7 @@ namespace MMGT.API.Controllers
         }
 
         [HttpPost("approve/{documentId}")]
-        [Authorize(Roles = "REVIEWER,LEAD_REVIEWER,ADMIN")]
+        [Authorize(Roles = "REVIEWER,LEAD_REVIEWER,ADMIN,SUPER_ADMIN")]
         public async Task<ActionResult> Approve(Guid documentId, [FromBody] ReviewRequest req)
         {
             try
@@ -34,7 +34,7 @@ namespace MMGT.API.Controllers
         }
 
         [HttpPost("reject/{documentId}")]
-        [Authorize(Roles = "REVIEWER,LEAD_REVIEWER,ADMIN")]
+        [Authorize(Roles = "REVIEWER,LEAD_REVIEWER,ADMIN,SUPER_ADMIN")]
         public async Task<ActionResult> Reject(Guid documentId, [FromBody] ReviewRequest req)
         {
             try
@@ -50,7 +50,7 @@ namespace MMGT.API.Controllers
         }
 
         [HttpPost("request-revision/{documentId}")]
-        [Authorize(Roles = "REVIEWER,LEAD_REVIEWER,ADMIN")]
+        [Authorize(Roles = "REVIEWER,LEAD_REVIEWER,ADMIN,SUPER_ADMIN")]
         public async Task<ActionResult> RequestRevision(Guid documentId, [FromBody] ReviewRequest req)
         {
             try

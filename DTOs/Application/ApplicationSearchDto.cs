@@ -5,6 +5,9 @@ namespace MMGT.API.DTOs.Application
     /// </summary>
     public class ApplicationSearchDto
     {
+        // HNI flag (null = not checked yet)
+        public bool? IsHni { get; set; }
+        public DateTime? HniCheckedAt { get; set; }
         public Guid Id { get; set; }
 
         public string ApplicationNumber { get; set; } = string.Empty;

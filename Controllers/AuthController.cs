@@ -131,6 +131,21 @@ namespace MMGT.API.Controllers
             }
         }
 
+        [HttpPost("forgot-password")]
+        [AllowAnonymous]
+        public async Task<ActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+        {
+            try
+            {
+                await _authService.ForgotPasswordAsync(request?.Email ?? string.Empty);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[FORGOT-PASSWORD] Failed: " + ex.GetType().Name + " - " + ex.Message);
+            }
+            // Always the same answer, whether or not the address is registered.
+            return Ok(new { message = "If that email address is registered, a temporary password has been sent to it. Please check your inbox and spam folder." });
+        }
         [HttpGet("test")]
         public ActionResult Test()
         {
@@ -176,7 +191,7 @@ namespace MMGT.API.Controllers
                     return Unauthorized(new { message = "Invalid admin user ID in token" });
                 }
 
-                var result = await _authService.AdminResetPasswordAsync(adminId, request.UserId);
+                var result = await _authService.AdminResetPasswordAsync(adminId, request.UserId, request.SendEmail);
                 return Ok(result);
             }
             catch (Exception ex)

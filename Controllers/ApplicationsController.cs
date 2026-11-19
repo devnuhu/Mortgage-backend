@@ -108,6 +108,7 @@ namespace MMGT.API.Controllers
         {
             try
             {
+                if (!await MMGT.API.Services.ApplicationAccessGuard.CanViewAsync(HttpContext, id)) return Forbid();
                 var application = await _applicationService.GetApplicationByIdAsync(id);
                 return Ok(application);
             }
@@ -132,6 +133,11 @@ namespace MMGT.API.Controllers
             {
                 var userId = GetCurrentUserId();
                 var application = await _applicationService.GetApplicationDetailsAsync(id);
+                if (MMGT.API.Services.ApplicationAccessGuard.IsServiceManagerOnly(HttpContext) && !await MMGT.API.Services.ApplicationAccessGuard.IsOwnerAsync(HttpContext, id) && application?.Documents != null)
+                {
+                    // Service Managers see the case and the rejection reasons, never the files of a case they did not create.
+                    foreach (var d in application.Documents) { d.FileName = string.Empty; d.FileSize = 0; }
+                }
 
                 // Check authorization
                 var userRole = User.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")?.Value ?? string.Empty;
@@ -149,7 +155,7 @@ namespace MMGT.API.Controllers
                 }
 
                 // LEAD_REVIEWER can view any application (for reassignment purposes)
-                if (userRole == "LEAD_REVIEWER")
+                if (userRole == "LEAD_REVIEWER" || userRole == "SUPER_ADMIN")
                 {
                     return Ok(application);
                 }
@@ -161,7 +167,7 @@ namespace MMGT.API.Controllers
                     var hasActiveAssignment = application.AssignmentHistory != null && 
                         application.AssignmentHistory.Any(a => a.IsActive);
 
-                    if (hasActiveAssignment)
+                    if (hasActiveAssignment && await MMGT.API.Services.ApplicationAccessGuard.CanViewAsync(HttpContext, id))
                     {
                         return Ok(application);
                     }
@@ -194,14 +200,15 @@ namespace MMGT.API.Controllers
                 if (exists)
                 {
                     var existing = await _applicationService.GetApplicationByRsaPinAsync(rsaPin);
+                    var mine = existing != null && existing.UserId == GetCurrentUserId();
                     return Ok(new
                     {
                         exists = true,
-                        message = "An active application already exists with this RSA PIN",
-                        applicationId = existing?.Id,
-                        applicationNumber = existing?.ApplicationNumber,
-                        status = existing?.Status,
-                        borrowerName = $"{existing?.FirstName} {existing?.LastName}".Trim()
+                        message = "This RSA PIN has already been used for an application. A RSA PIN can only be used once.",
+                        applicationId = mine ? existing?.Id : null,
+                        applicationNumber = mine ? existing?.ApplicationNumber : null,
+                        status = mine ? existing?.Status : null,
+                        borrowerName = mine ? $"{existing?.FirstName} {existing?.LastName}".Trim() : null
                     });
                 }
 
@@ -255,11 +262,12 @@ namespace MMGT.API.Controllers
 
         [HttpPost("{id}/submit")]
         [Authorize(Roles = "CLIENT,PMI,SERVICE_MANAGER")]
-        public async Task<ActionResult> SubmitApplication(Guid id)
+        public async Task<ActionResult> SubmitApplication(Guid id, [FromBody] MMGT.API.DTOs.Application.SubmitApplicationRequest? request = null)
         {
             try
             {
-                var result = await _applicationService.SubmitApplicationAsync(id);
+                if (!await MMGT.API.Services.ApplicationAccessGuard.IsOwnerAsync(HttpContext, id)) return Forbid();
+                var result = await _applicationService.SubmitApplicationAsync(id, request?.Note);
                 if (result)
                     return Ok(new { message = "Application submitted successfully" });
                 else
@@ -293,11 +301,12 @@ namespace MMGT.API.Controllers
         }
 
         [HttpDelete("{id}")]
-        [Authorize(Roles = "CLIENT")]
+        [Authorize(Roles = "CLIENT,PMI,SERVICE_MANAGER")]
         public async Task<ActionResult> DeleteApplication(Guid id)
         {
             try
             {
+                if (!await MMGT.API.Services.ApplicationAccessGuard.IsOwnerAsync(HttpContext, id)) return Forbid();
                 var result = await _applicationService.DeleteApplicationAsync(id);
                 if (result)
                     return Ok(new { message = "Application deleted successfully" });
@@ -315,6 +324,7 @@ namespace MMGT.API.Controllers
         {
             try
             {
+                if (!await MMGT.API.Services.ApplicationAccessGuard.CanViewAsync(HttpContext, id)) return Forbid();
                 var reviewHistory = await _applicationService.GetApplicationReviewHistoryAsync(id);
                 return Ok(reviewHistory);
             }
@@ -329,6 +339,7 @@ namespace MMGT.API.Controllers
         {
             try
             {
+                if (!await MMGT.API.Services.ApplicationAccessGuard.CanViewAsync(HttpContext, id)) return Forbid();
                 var pagination = new PaginationRequest { PageNumber = pageNumber, PageSize = pageSize };
                 var reviewHistory = await _applicationService.GetApplicationReviewHistoryPagedAsync(id, pagination);
                 return Ok(reviewHistory);
@@ -375,6 +386,7 @@ namespace MMGT.API.Controllers
         {
             try
             {
+                if (!await MMGT.API.Services.ApplicationAccessGuard.CanViewDocumentsAsync(HttpContext, id)) return Forbid();
                 // Verify application exists
                 var application = await _applicationService.GetApplicationByIdAsync(id);
 
@@ -412,11 +424,7 @@ namespace MMGT.API.Controllers
                             ?? string.Empty;
 
                 // Owner or admin/reviewer can access
-                bool hasAccess = application.UserId == userId || 
-                                userRole.Contains("ADMIN") || 
-                                userRole.Contains("REVIEWER") || 
-                                userRole.Contains("LEAD_REVIEWER") ||
-                                userRole.Contains("SERVICE_MANAGER");
+                bool hasAccess = await MMGT.API.Services.ApplicationAccessGuard.CanViewDocumentsAsync(HttpContext, id);
 
                 if (!hasAccess)
                     return Forbid();
@@ -436,24 +444,25 @@ namespace MMGT.API.Controllers
         }
 
         [HttpGet("search")]
-        [Authorize(Roles = "SUPER_ADMIN,ADMIN,SERVICE_MANAGER")]
+        [Authorize(Roles = "SUPER_ADMIN,ADMIN,SERVICE_MANAGER,LEAD_REVIEWER")]
         public async Task<ActionResult<PaginatedResponse<ApplicationSearchDto>>> SearchApplications(
             [FromQuery] string? rsaPin = null,
             [FromQuery] string? borrowerName = null,
             [FromQuery] DateTime? submittedFromDate = null,
-            [FromQuery] DateTime? submittedToDate = null,
+            [FromQuery] DateTime? submittedToDate = null, [FromQuery] string? status = null, [FromQuery] Guid? pmiCompanyId = null, [FromQuery] bool? isHni = null, [FromQuery] bool submittedOnly = false,
             [FromQuery] int pageNumber = 1,
             [FromQuery] int pageSize = 50)
         {
             try
             {
+                if (pageSize < 1 || pageSize > 100) pageSize = 100;
+                if (User.IsInRole("SERVICE_MANAGER") && (rsaPin ?? "").Trim().Length < 3 && (borrowerName ?? "").Trim().Length < 3)
+                    return BadRequest(new { message = "Enter at least 3 characters of an RSA PIN or borrower name to search." });
                 var results = await _applicationService.SearchApplicationsAdvancedAsync(
                     rsaPin,
                     borrowerName,
                     submittedFromDate,
-                    submittedToDate,
-                    pageNumber,
-                    pageSize);
+                    submittedToDate, pageNumber, pageSize, status, pmiCompanyId, isHni, submittedOnly);
 
                 return Ok(results);
             }
@@ -472,6 +481,7 @@ namespace MMGT.API.Controllers
                     return BadRequest(new { message = "Search term cannot be empty" });
 
                 var results = await _applicationService.SearchApplicationsAsync(searchTerm);
+                if (!MMGT.API.Services.ApplicationAccessGuard.IsStaff(HttpContext)) { var me = GetCurrentUserId(); results = results.Where(r => r.UserId == me).ToList(); }
                 return Ok(results);
             }
             catch (Exception ex)

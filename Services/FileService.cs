@@ -236,11 +236,39 @@ namespace MMGT.API.Services
             return trimmedFileType;
         }
 
-        public async Task<FileUploadResponse> UploadFileAsync(IFormFile file, Guid applicationId, string documentType, Guid performedById)
+        /// <summary>Who may change documents and when. Draft: anything. Rejected application: only rejected documents (all, if every document is rejected). Otherwise: nothing. Delete: draft only.</summary>
+        private async Task EnsureDocumentsMayChangeAsync(MMGT.API.Models.Application application, ApplicationDocument? existing, string action)
+        {
+            if (existing != null)
+            {
+                var existingCode = await _context.DocumentTypes.AsNoTracking().Where(t => t.Id == existing.DocumentTypeId).Select(t => t.Code).FirstOrDefaultAsync();
+                if (string.Equals(existingCode, "identity_document", StringComparison.OrdinalIgnoreCase))
+                    throw new Exception("This document comes from the old system and is read-only. It cannot be changed or deleted.");
+            }
+            var status = (application.Status ?? string.Empty).Trim().ToLowerInvariant();
+            if (status == "draft") return;
+            if (action == "delete")
+                throw new Exception("Documents cannot be deleted after the application has been submitted.");
+            if (status != "rejected")
+                throw new Exception("Documents can only be changed while the application is a draft or after it was rejected. Current status: " + application.Status + ".");
+            if (existing == null)
+                throw new Exception("Only the documents that were rejected can be uploaded again.");
+            Func<string?, bool> isRejected = s => string.Equals(s, "Rejected", StringComparison.OrdinalIgnoreCase) || string.Equals(s, "RequestedRevision", StringComparison.OrdinalIgnoreCase);
+            if (isRejected(existing.ReviewStatus)) return;
+            var statuses = await _context.ApplicationDocuments.AsNoTracking()
+                .Where(d => d.ApplicationId == application.Id)
+                .Select(d => d.ReviewStatus).ToListAsync();
+            var allRejected = statuses.Count > 0 && statuses.All(isRejected);
+            if (!allRejected)
+                throw new Exception("This document was not rejected, so it cannot be replaced. Only the rejected documents can be uploaded again.");
+        }
+        
+        public async Task<FileUploadResponse> UploadFileAsync(IFormFile file, Guid applicationId, string documentType, Guid performedById, string? documentName = null)
         {
             var application = await _context.Applications.FindAsync(applicationId);
             if (application == null)
                 throw new Exception("Application not found");
+            ApplicationLockGuard.EnsureOpen(application);
 
             if (file == null || file.Length == 0)
                 throw new Exception("No file provided");
@@ -255,6 +283,26 @@ namespace MMGT.API.Services
             var docType = await _context.DocumentTypes.FirstOrDefaultAsync(dt => dt.Code == documentType);
             if (docType == null)
                 throw new Exception($"Document type '{documentType}' not found. Please use a valid document type code.");
+                
+                if (string.Equals(docType.Code, "identity_document", StringComparison.OrdinalIgnoreCase))
+                    throw new Exception("This document type is read-only (old system). Nothing can be uploaded to it.");
+                
+                // One current document per type: if this type already has a document, this upload replaces it (the old file is archived by the replace).
+                // OTHER: many named documents per application (one per name). Every other type: one per type.
+                var isOther = string.Equals(docType.Code, "OTHER", StringComparison.OrdinalIgnoreCase);
+                var cleanName = (documentName ?? string.Empty).Trim();
+                if (isOther)
+                {
+                    if (cleanName.Length == 0) throw new Exception("Give this document a name, for example 'Utility bill'.");
+                    if (cleanName.Length > 150) throw new Exception("The document name must be 150 characters or fewer.");
+                }
+                else cleanName = string.Empty;
+                var currentForType = await _context.ApplicationDocuments
+                    .FirstOrDefaultAsync(d => d.ApplicationId == applicationId && d.DocumentTypeId == docType.Id && d.IsLatestVersion
+                        && (!isOther || d.CustomName == cleanName));
+                if (currentForType != null)
+                    return await ReplaceFileAsync(currentForType.Id, file, performedById);
+                await EnsureDocumentsMayChangeAsync(application, null, "upload");
 
             // Validate file size: use document-type-specific limit
             int maxFileSizeKB = docType.MaxFileSizeKB;
@@ -289,6 +337,7 @@ namespace MMGT.API.Services
                             FileType = file.ContentType,
                             DocumentTypeId = docType.Id,  // Set required DocumentTypeId
                             LegacyDocumentType = documentType,
+                            CustomName = isOther ? cleanName : null,
                             FileSize = file.Length,
                             ApplicationId = applicationId,
                             CreatedAt = DateTime.UtcNow,
@@ -297,6 +346,7 @@ namespace MMGT.API.Services
                         };
 
                         _context.ApplicationDocuments.Add(applicationDocument);
+                        await DocumentAudit.AddEventAsync(_context, applicationId, applicationDocument, "Uploaded", performedById, null, storedFileName);
 
                         // Do NOT change application status on document upload
                         // Application status should only change when:
@@ -347,6 +397,7 @@ namespace MMGT.API.Services
                         FilePath = ad.FilePath ?? string.Empty,
                         FileType = ad.FileType,
                         DocumentType = ad.LegacyDocumentType ?? string.Empty,
+                        CustomName = ad.CustomName,
                         FileSize = ad.FileSize,
                         IsBlobStored = ad.FileContent != null && ad.FileContent.Length > 0,
                         ApplicationStatus = app.Status ?? string.Empty
@@ -385,6 +436,7 @@ namespace MMGT.API.Services
                     FilePath = doc.FilePath ?? string.Empty,
                     FileType = doc.FileType,
                     DocumentType = doc.LegacyDocumentType ?? string.Empty,
+                    CustomName = doc.CustomName,
                     FileSize = doc.FileSize,
                     IsBlobStored = doc.FileContent != null && doc.FileContent.Length > 0,
                     IsLegacy = doc.IsLegacy,
@@ -408,6 +460,9 @@ namespace MMGT.API.Services
         {
             var doc = await _context.ApplicationDocuments.FirstOrDefaultAsync(d => d.Id == fileId);
             if (doc == null) return false;
+            await ApplicationLockGuard.EnsureOpenAsync(_context, doc.ApplicationId);
+            var appForDelete = await _context.Applications.AsNoTracking().FirstOrDefaultAsync(a => a.Id == doc.ApplicationId);
+            if (appForDelete != null) await EnsureDocumentsMayChangeAsync(appForDelete, doc, "delete");
 
             // PROTECTION: Prevent deletion of legacy documents
             if (doc.IsLegacy || (!string.IsNullOrWhiteSpace(doc.FilePath) && 
@@ -423,6 +478,10 @@ namespace MMGT.API.Services
                 throw new Exception("No file content found. Cannot delete file.");
             }
 
+            // Keep the file and its review result before the row is removed (audit trail).
+            var archivedVersion = await DocumentAudit.ArchiveAsync(_context, doc, performedById, "Deleted");
+            _context.ApplicationDocumentVersions.Add(archivedVersion);
+            await DocumentAudit.AddEventAsync(_context, doc.ApplicationId, doc, "Deleted", performedById, doc.ReviewComments, null, doc.FileName, archivedVersion.Id);
             _context.ApplicationDocuments.Remove(doc);
             await _context.SaveChangesAsync();
             return true;
@@ -470,6 +529,10 @@ namespace MMGT.API.Services
                 .Include(d => d.DocumentType)
                 .FirstOrDefaultAsync(d => d.Id == existingFileId);
             if (existing == null) throw new Exception("Existing file not found");
+            await ApplicationLockGuard.EnsureOpenAsync(_context, existing.ApplicationId);
+            var appForRule = await _context.Applications.AsNoTracking().FirstOrDefaultAsync(a => a.Id == existing.ApplicationId);
+            if (appForRule == null) throw new Exception("Application not found");
+            await EnsureDocumentsMayChangeAsync(appForRule, existing, "replace");
 
             // PROTECTION: Prevent replacement of legacy documents
             if (existing.IsLegacy || (!string.IsNullOrWhiteSpace(existing.FilePath) && 
@@ -521,6 +584,13 @@ namespace MMGT.API.Services
                 {
                     try
                     {
+                        // Keep the old file with its review result and reason BEFORE it is overwritten (audit trail).
+                        var archivedVersion = await DocumentAudit.ArchiveAsync(_context, existing, performedById, "Replaced");
+                        _context.ApplicationDocumentVersions.Add(archivedVersion);
+                        var previousFileName = existing.FileName;
+                        var previousReason = existing.ReviewComments;
+                        existing.Version += 1;
+                        await DocumentAudit.AddEventAsync(_context, existing.ApplicationId, existing, "Replaced", performedById, previousReason, newStoredFileName, previousFileName, archivedVersion.Id);
                         // Update db record with new BLOB only (no disk storage)
                         existing.FileName = newStoredFileName;
                         existing.FilePath = null;  // BLOB-only, no disk storage
@@ -588,7 +658,7 @@ namespace MMGT.API.Services
                            d.FileContent != null && 
                            d.FileContent.Length > 0 &&
                            !d.IsLegacy)
-                .OrderBy(d => d.CreatedAt)
+                .OrderBy(d => d.DocumentType!.DisplayOrder).ThenBy(d => d.CreatedAt)
                 .Select(d => new { d.Id, d.FileName, d.FileType, d.CreatedAt })
                 .ToListAsync();
 

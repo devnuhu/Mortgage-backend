@@ -24,8 +24,10 @@ namespace MMGT.API.DTOs.User
         public Guid? PMICompanyId { get; set; }
 
         
-        [Required]
-        [MinLength(8)]
-        public string TemporaryPassword { get; set; } = string.Empty;
+        /// <summary>
+        /// Not used. A temporary password is always generated and emailed to the new user.
+        /// Kept optional so callers that still send one are not rejected.
+        /// </summary>
+        public string? TemporaryPassword { get; set; }
     }
 }

@@ -18,13 +18,192 @@ namespace MMGT.API.Services
             _logger = logger;
         }
 
+        private sealed class PlanPerson
+        {
+            public Guid Id;
+            public string Name = string.Empty;
+            public bool Available;
+            public int Now;
+            public int After;
+            public int Next;
+            public List<(Guid ApplicationId, string Ref)> Apps = new();
+        }
+        
         public async Task<WorkloadBalancingSummaryDto> GetWorkloadBalancingSuggestionsAsync()
+        {
+            try
+            {
+                var open = await _context.ApplicationAssignments
+                    .AsNoTracking()
+                    .Where(OpenWorkload.Open)
+                    .Select(a => new { a.ApplicationId, a.ReviewerId, a.AssignedAt, Ref = a.Application.ApplicationNumber })
+                    .ToListAsync();
+        
+                var reviewers = await _context.Users
+                    .AsNoTracking()
+                    .Where(u => u.IsActive && u.Role == "ADMIN")
+                    .Select(u => new { u.Id, u.FirstName, u.LastName })
+                    .ToListAsync();
+        
+                var notAvailable = new HashSet<Guid>(await _context.ReviewerAvailabilities
+                    .AsNoTracking()
+                    .Where(r => r.Status != "Available")
+                    .Select(r => r.ReviewerId)
+                    .ToListAsync());
+        
+                var byReviewer = open
+                    .GroupBy(o => o.ReviewerId)
+                    .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.AssignedAt).ToList());
+        
+                var people = new List<PlanPerson>();
+                foreach (var u in reviewers)
+                {
+                    var person = new PlanPerson
+                    {
+                        Id = u.Id,
+                        Name = ((u.FirstName ?? string.Empty) + " " + (u.LastName ?? string.Empty)).Trim(),
+                        Available = !notAvailable.Contains(u.Id)
+                    };
+                    if (byReviewer.TryGetValue(u.Id, out var list))
+                    {
+                        foreach (var x in list)
+                            person.Apps.Add((x.ApplicationId, x.Ref ?? "N/A"));
+                    }
+                    person.Now = person.Apps.Count;
+                    person.After = person.Now;
+                    people.Add(person);
+                }
+        
+                var pool = people.Where(p => p.Available).ToList();
+                var unavailable = people.Where(p => !p.Available).ToList();
+                var totalOpen = open.Count;
+                var poolOpen = pool.Sum(p => p.Now);
+                var unavailableOpen = unavailable.Sum(p => p.Now);
+                var otherOpen = totalOpen - poolOpen - unavailableOpen;
+        
+                var summary = new WorkloadBalancingSummaryDto
+                {
+                    TotalApplications = totalOpen,
+                    AvailableReviewers = pool.Count,
+                    IsBalanced = true
+                };
+        
+                string Notes()
+                {
+                    var notes = string.Empty;
+                    if (unavailable.Count > 0)
+                        notes += $" {unavailable.Count} reviewer(s) are unavailable or on leave and hold {unavailableOpen} open application(s); they are not counted in the average and are not given new work.";
+                    if (otherOpen > 0)
+                        notes += $" {otherOpen} open application(s) are held by people who are not active reviewers.";
+                    return notes;
+                }
+        
+                if (pool.Count == 0)
+                {
+                    summary.Headline = "No reviewer is available right now, so there is nobody to move work to." + Notes();
+                    return summary;
+                }
+        
+                double avg = (double)poolOpen / pool.Count;
+                int ceilAvg = (int)Math.Ceiling(avg);
+                int floorAvg = (int)Math.Floor(avg);
+                double margin = Math.Max(2, avg * 0.15);
+        
+                var donors = pool.Where(p => p.Now > avg + margin).OrderByDescending(p => p.Now).ToList();
+                var takers = pool.Where(p => p.Now < avg - margin).OrderBy(p => p.Now).ToList();
+        
+                var moves = new List<WorkloadMoveDto>();
+                var suggestions = new List<WorkloadSuggestionDto>();
+                int di = 0, ti = 0;
+                while (di < donors.Count && ti < takers.Count)
+                {
+                    var d = donors[di];
+                    var t = takers[ti];
+                    int surplus = d.After - ceilAvg;
+                    int room = floorAvg - t.After;
+                    if (surplus <= 0) { di++; continue; }
+                    if (room <= 0) { ti++; continue; }
+                    int n = Math.Min(Math.Min(surplus, room), d.Apps.Count - d.Next);
+                    if (n <= 0) { di++; continue; }
+        
+                    var refs = new List<string>();
+                    for (int i = 0; i < n; i++)
+                    {
+                        var app = d.Apps[d.Next++];
+                        refs.Add(app.Ref);
+                        suggestions.Add(new WorkloadSuggestionDto
+                        {
+                            ApplicationId = app.ApplicationId,
+                            ApplicationRefNumber = app.Ref,
+                            CurrentReviewerId = d.Id,
+                            CurrentReviewerName = d.Name,
+                            CurrentReviewerWorkload = d.Now,
+                            SuggestedReviewerId = t.Id,
+                            SuggestedReviewerName = t.Name,
+                            SuggestedReviewerWorkload = t.Now,
+                            RebalanceReason = $"The team average is {avg:F0} open applications per available reviewer. {d.Name} has {d.Now}; {t.Name} has {t.Now}.",
+                            ImprovementPercentage = avg > 0 ? ((d.Now - avg) / avg) * 100 : 0
+                        });
+                    }
+        
+                    d.After -= n;
+                    t.After += n;
+                    moves.Add(new WorkloadMoveDto
+                    {
+                        FromReviewerId = d.Id,
+                        FromReviewerName = d.Name,
+                        FromOpenNow = d.Now,
+                        ToReviewerId = t.Id,
+                        ToReviewerName = t.Name,
+                        ToOpenNow = t.Now,
+                        Count = n,
+                        ApplicationRefs = refs
+                    });
+                }
+        
+                summary.AverageWorkload = Math.Round(avg, 1);
+                summary.MaxWorkload = pool.Max(p => p.Now);
+                summary.MinWorkload = pool.Min(p => p.Now);
+                summary.WorkloadStandardDeviation = CalculateStandardDeviation(pool.Select(p => (double)p.Now).ToList());
+                summary.Suggestions = suggestions;
+                summary.SuggestionsGenerated = suggestions.Count;
+                summary.Moves = moves;
+                summary.IsBalanced = moves.Count == 0;
+                summary.ReviewerSummary = people
+                    .OrderByDescending(p => p.Available)
+                    .ThenByDescending(p => p.Now)
+                    .Select(p => new WorkloadReviewerSummaryDto
+                    {
+                        ReviewerId = p.Id,
+                        ReviewerName = p.Name,
+                        OpenNow = p.Now,
+                        OpenAfter = p.After,
+                        Change = p.After - p.Now,
+                        IsAvailable = p.Available
+                    })
+                    .ToList();
+        
+                if (moves.Count == 0)
+                    summary.Headline = $"Work is spread fairly evenly: {pool.Count} available reviewer(s) hold about {avg:F0} open applications each." + Notes();
+                else
+                    summary.Headline = $"The team average is {avg:F0} open applications per available reviewer. {donors.Count} reviewer(s) are well above it and {takers.Count} are well below it. Moving {suggestions.Count} application(s) as suggested brings everyone close to the average." + Notes();
+        
+                return summary;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error generating workload balancing suggestions: {ex.Message}");
+                throw;
+            }
+        }
+        
+        private async Task<WorkloadBalancingSummaryDto> GetWorkloadBalancingSuggestionsOldAsync()
         {
             try
             {
                 var activeAssignments = await _context.ApplicationAssignments
                     .AsNoTracking()
-                    .Where(a => a.IsActive)
+                    .Where(OpenWorkload.Open)
                     .Include(a => a.Application)
                     .Include(a => a.Reviewer)
                     .ToListAsync();
@@ -81,11 +260,17 @@ namespace MMGT.API.Services
 
         public async Task<List<WorkloadSuggestionDto>> GetSuggestionsForReviewerAsync(Guid reviewerId)
         {
+            var summary = await GetWorkloadBalancingSuggestionsAsync();
+            return summary.Suggestions.Where(s => s.CurrentReviewerId == reviewerId).ToList();
+        }
+        
+        private async Task<List<WorkloadSuggestionDto>> GetSuggestionsForReviewerOldAsync(Guid reviewerId)
+        {
             try
             {
                 var activeAssignments = await _context.ApplicationAssignments
                     .AsNoTracking()
-                    .Where(a => a.IsActive)
+                    .Where(OpenWorkload.Open)
                     .Include(a => a.Application)
                     .Include(a => a.Reviewer)
                     .ToListAsync();
@@ -119,7 +304,7 @@ namespace MMGT.API.Services
             {
                 var reviewerAssignments = await _context.ApplicationAssignments
                     .AsNoTracking()
-                    .Where(a => a.ReviewerId == reviewerId && a.IsActive)
+                    .Where(a => a.ReviewerId == reviewerId).Where(OpenWorkload.Open)
                     .Include(a => a.Application)
                     .Include(a => a.Reviewer)
                     .OrderBy(a => a.AssignedAt)
@@ -128,7 +313,7 @@ namespace MMGT.API.Services
 
                 var allAssignments = await _context.ApplicationAssignments
                     .AsNoTracking()
-                    .Where(a => a.IsActive)
+                    .Where(OpenWorkload.Open)
                     .Include(a => a.Reviewer)
                     .ToListAsync();
 
@@ -184,12 +369,12 @@ namespace MMGT.API.Services
 
                 var activeAssignments = await _context.ApplicationAssignments
                     .AsNoTracking()
-                    .Where(a => a.IsActive)
+                    .Where(OpenWorkload.Open)
                     .CountAsync();
 
                 var reviewerCount = await _context.ApplicationAssignments
                     .AsNoTracking()
-                    .Where(a => a.IsActive)
+                    .Where(OpenWorkload.Open)
                     .Select(a => a.ReviewerId)
                     .Distinct()
                     .CountAsync();
@@ -214,7 +399,7 @@ namespace MMGT.API.Services
             {
                 var reviewerWorkloads = await _context.ApplicationAssignments
                     .AsNoTracking()
-                    .Where(a => a.IsActive)
+                    .Where(OpenWorkload.Open)
                     .GroupBy(a => a.ReviewerId)
                     .Select(g => new { ReviewerId = g.Key, Workload = g.Count() })
                     .ToListAsync();

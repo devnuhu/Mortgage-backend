@@ -17,5 +17,6 @@ namespace MMGT.API.DTOs.Application
         public int CompletedCount { get; set; }
         public decimal TotalLoanAmount { get; set; }
         public decimal TotalPropertyValue { get; set; }
+        public int StaleDraftCount { get; set; }
     }
 }

@@ -5,6 +5,11 @@ using MMGT.API.Services.Interfaces;
 
 namespace MMGT.API.Services
 {
+    /// <summary>
+    /// Balances open workload between available reviewers.
+    /// Workload = open items (see OpenWorkload). Only applications still in 'submitted' (not started by the reviewer) are moved
+    /// when balancing, oldest first. Every move closes the old assignment, creates a new one and writes a history row.
+    /// </summary>
     public class CriteriaBasedReassignmentService : ICriteriaBasedReassignmentService
     {
         private readonly ApplicationDbContext _context;
@@ -21,222 +26,191 @@ namespace MMGT.API.Services
             _logger = logger;
         }
 
-        public async Task<List<CriteriaReassignmentResultDto>> ExecuteReassignmentsByCriteriaAsync(ReassignmentCriteriaDto criteria)
+        private sealed class PoolReviewer
         {
+            public Guid Id { get; set; }
+            public string Name { get; set; } = string.Empty;
+            public int Open { get; set; }
+        }
+
+        /// <summary>Active reviewers (ADMIN role) who are available now, with their open workload. Idle reviewers are included.</summary>
+        private async Task<List<PoolReviewer>> GetAvailablePoolAsync()
+        {
+            var users = await _context.Users.AsNoTracking()
+                .Where(u => u.IsActive && u.Role == "ADMIN")
+                .ToListAsync();
+
+            var open = await _context.ApplicationAssignments
+                .Where(OpenWorkload.Open)
+                .GroupBy(a => a.ReviewerId)
+                .Select(g => new { ReviewerId = g.Key, Count = g.Count() })
+                .ToListAsync();
+
+            var pool = new List<PoolReviewer>();
+            foreach (var u in users)
+            {
+                if (!await _availabilityService.IsReviewerAvailableAsync(u.Id)) continue;
+                pool.Add(new PoolReviewer
+                {
+                    Id = u.Id,
+                    Name = (u.FirstName + " " + u.LastName).Trim(),
+                    Open = open.FirstOrDefault(o => o.ReviewerId == u.Id)?.Count ?? 0
+                });
+            }
+            return pool;
+        }
+
+        public async Task<List<CriteriaReassignmentResultDto>> ExecuteReassignmentsByCriteriaAsync(ReassignmentCriteriaDto criteria, Guid? performedBy = null)
+        {
+            var results = new List<CriteriaReassignmentResultDto>();
             try
             {
-                var results = new List<CriteriaReassignmentResultDto>();
-
-                // Get all active assignments
-                var activeAssignments = await _context.ApplicationAssignments
-                    .Where(a => a.IsActive)
-                    .Include(a => a.Application)
-                    .Include(a => a.Reviewer)
-                    .ToListAsync();
-
-                if (activeAssignments.Count == 0)
+                var pool = await GetAvailablePoolAsync();
+                if (pool.Count < 2)
                 {
-                    _logger.LogInformation("No active assignments found for criteria-based reassignment");
+                    _logger.LogInformation("Balancing skipped: fewer than two available reviewers");
                     return results;
                 }
 
-                // Calculate workload metrics
-                var reviewerWorkloads = activeAssignments
-                    .GroupBy(a => a.ReviewerId)
-                    .Select(g => new
-                    {
-                        ReviewerId = g.Key,
-                        Workload = g.Count(),
-                        Assignments = g.ToList()
-                    })
-                    .ToList();
+                int maxMoves = Math.Clamp(criteria.MaxReassignments, 1, 200);
+                int tolerance = Math.Max(1, criteria.MaxDifference);
+                var exhausted = new HashSet<Guid>();
+                var plannedAppIds = new List<Guid>();
 
-                double avgWorkload = reviewerWorkloads.Average(r => r.Workload);
-                var workloadThreshold = avgWorkload * (criteria.WorkloadThresholdPercentage / 100);
-                var targetMaxWorkload = avgWorkload * (criteria.TargetWorkloadMaxPercentage / 100);
-
-                // Get performance metrics for prioritization
-                var performanceMetrics = await _context.ReviewerPerformanceMetrics
-                    .AsNoTracking()
-                    .ToListAsync();
-
-                // Process overloaded reviewers
-                foreach (var overloaded in reviewerWorkloads.Where(r => r.Workload > workloadThreshold))
+                while (results.Count < maxMoves)
                 {
-                    var assignmentsToReassign = overloaded.Assignments
+                    var high = pool.Where(p => !exhausted.Contains(p.Id)).OrderByDescending(p => p.Open).FirstOrDefault();
+                    var low = pool.OrderBy(p => p.Open).First();
+                    if (high == null || high.Id == low.Id || high.Open - low.Open <= tolerance) break;
+
+                    // Only work the reviewer has not started yet, oldest first.
+                    var candidate = await _context.ApplicationAssignments
+                        .Include(a => a.Application)
+                        .Where(a => a.ReviewerId == high.Id)
+                        .Where(OpenWorkload.Open)
+                        .Where(a => a.Application!.Status == "submitted" && !plannedAppIds.Contains(a.ApplicationId))
                         .OrderBy(a => a.AssignedAt)
-                        .Take(criteria.MaxReassignments - results.Count)
-                        .ToList();
+                        .FirstOrDefaultAsync();
 
-                    foreach (var assignment in assignmentsToReassign)
+                    if (candidate == null)
                     {
-                        if (results.Count >= criteria.MaxReassignments) break;
-
-                        var targetReviewers = GetEligibleTargetReviewers(
-                            reviewerWorkloads.Cast<dynamic>().ToList(),
-                            overloaded.ReviewerId,
-                            targetMaxWorkload,
-                            criteria,
-                            performanceMetrics);
-
-                        if (!targetReviewers.Any())
-                        {
-                            results.Add(new CriteriaReassignmentResultDto
-                            {
-                                ApplicationId = assignment.ApplicationId,
-                                ApplicationRefNumber = assignment.Application?.ApplicationNumber,
-                                PreviousReviewerId = assignment.ReviewerId,
-                                PreviousReviewerName = assignment.Reviewer?.FirstName + " " + assignment.Reviewer?.LastName,
-                                Success = false,
-                                ErrorMessage = "No eligible target reviewers found"
-                            });
-                            continue;
-                        }
-
-                        var targetReviewer = targetReviewers.First();
-                        var reassignmentResult = await ExecuteReassignmentAsync(
-                            assignment,
-                            targetReviewer.ReviewerId,
-                            "CriteriaBased",
-                            $"Workload balancing: {overloaded.Workload} to {targetReviewer.Workload}");
-
-                        results.Add(reassignmentResult);
+                        exhausted.Add(high.Id);
+                        continue;
                     }
+
+                    plannedAppIds.Add(candidate.ApplicationId);
+                    var details = $"Workload balancing: {high.Name} had {high.Open} open items, {low.Name} had {low.Open}";
+
+                    CriteriaReassignmentResultDto result;
+                    if (criteria.PreviewOnly)
+                    {
+                        result = new CriteriaReassignmentResultDto
+                        {
+                            ApplicationId = candidate.ApplicationId,
+                            ApplicationRefNumber = candidate.Application?.ApplicationNumber,
+                            PreviousReviewerId = high.Id,
+                            PreviousReviewerName = high.Name,
+                            NewReviewerId = low.Id,
+                            NewReviewerName = low.Name,
+                            ReassignmentReason = details,
+                            Success = true
+                        };
+                    }
+                    else
+                    {
+                        result = await MoveAsync(candidate, low.Id, low.Name, high.Name, "CriteriaBased", details, performedBy);
+                    }
+
+                    results.Add(result);
+                    if (result.Success) { high.Open--; low.Open++; }
+                    else { exhausted.Add(high.Id); }
                 }
 
-                _logger.LogInformation($"Completed criteria-based reassignments: {results.Count(r => r.Success)} successful, {results.Count(r => !r.Success)} failed");
-
+                _logger.LogInformation($"Balancing {(criteria.PreviewOnly ? "preview" : "run")}: {results.Count(r => r.Success)} successful, {results.Count(r => !r.Success)} failed");
                 return results;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error executing criteria-based reassignments: {ex.Message}");
+                _logger.LogError($"Error balancing workload: {ex.Message}");
                 throw;
             }
         }
 
         public async Task<List<CriteriaReassignmentResultDto>> GetReassignmentCandidatesByCriteriaAsync(Guid reviewerId, ReassignmentCriteriaDto criteria)
         {
-            try
+            var results = new List<CriteriaReassignmentResultDto>();
+            var pool = await GetAvailablePoolAsync();
+            var me = pool.FirstOrDefault(p => p.Id == reviewerId);
+            if (me == null || pool.Count < 2) return results;
+
+            int tolerance = Math.Max(1, criteria.MaxDifference);
+            int maxMoves = Math.Clamp(criteria.MaxReassignments, 1, 200);
+
+            var items = await _context.ApplicationAssignments
+                .AsNoTracking()
+                .Include(a => a.Application)
+                .Where(a => a.ReviewerId == reviewerId)
+                .Where(OpenWorkload.Open)
+                .Where(a => a.Application!.Status == "submitted")
+                .OrderBy(a => a.AssignedAt)
+                .ToListAsync();
+
+            foreach (var item in items)
             {
-                var results = new List<CriteriaReassignmentResultDto>();
+                if (results.Count >= maxMoves) break;
+                var low = pool.Where(p => p.Id != reviewerId).OrderBy(p => p.Open).First();
+                if (me.Open - low.Open <= tolerance) break;
 
-                var reviewerAssignments = await _context.ApplicationAssignments
-                    .Where(a => a.ReviewerId == reviewerId && a.IsActive)
-                    .Include(a => a.Application)
-                    .Include(a => a.Reviewer)
-                    .ToListAsync();
-
-                var allAssignments = await _context.ApplicationAssignments
-                    .Where(a => a.IsActive)
-                    .Include(a => a.Reviewer)
-                    .ToListAsync();
-
-                var reviewerWorkloads = allAssignments
-                    .GroupBy(a => a.ReviewerId)
-                    .Select(g => new { ReviewerId = g.Key, Workload = g.Count() })
-                    .ToList();
-
-                double avgWorkload = reviewerWorkloads.Average(r => r.Workload);
-                var workloadThreshold = avgWorkload * (criteria.WorkloadThresholdPercentage / 100);
-
-                var reviewerWorkload = reviewerWorkloads.FirstOrDefault(r => r.ReviewerId == reviewerId)?.Workload ?? 0;
-
-                if (reviewerWorkload <= workloadThreshold)
+                results.Add(new CriteriaReassignmentResultDto
                 {
-                    _logger.LogInformation($"Reviewer {reviewerId} workload ({reviewerWorkload}) is below threshold ({workloadThreshold})");
-                    return results;
-                }
-
-                var performanceMetrics = await _context.ReviewerPerformanceMetrics.AsNoTracking().ToListAsync();
-                var targetMaxWorkload = avgWorkload * (criteria.TargetWorkloadMaxPercentage / 100);
-
-                var candidateList = reviewerWorkloads
-                    .Select(r => new
-                    {
-                        r.ReviewerId,
-                        r.Workload,
-                        Performance = performanceMetrics.FirstOrDefault(p => p.ReviewerId == r.ReviewerId)?.ApprovalRatePercentage ?? 0
-                    })
-                    .Where(r => r.Workload < targetMaxWorkload && r.ReviewerId != reviewerId)
-                    .OrderByDescending(r => r.Performance)
-                    .ToList();
-
-                foreach (var assignment in reviewerAssignments.OrderBy(a => a.AssignedAt).Take(criteria.MaxReassignments))
-                {
-                    var targetReviewer = candidateList.FirstOrDefault();
-                    if (targetReviewer == null) break;
-
-                    var targetUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == targetReviewer.ReviewerId);
-
-                    results.Add(new CriteriaReassignmentResultDto
-                    {
-                        ApplicationId = assignment.ApplicationId,
-                        ApplicationRefNumber = assignment.Application?.ApplicationNumber,
-                        PreviousReviewerId = reviewerId,
-                        PreviousReviewerName = assignment.Reviewer?.FirstName + " " + assignment.Reviewer?.LastName,
-                        NewReviewerId = targetReviewer.ReviewerId,
-                        NewReviewerName = targetUser?.FirstName + " " + targetUser?.LastName,
-                        ReassignmentReason = $"High workload: {reviewerWorkload} items, move to reviewer with {targetReviewer.Workload} items",
-                        Success = true
-                    });
-                }
-
-                return results;
+                    ApplicationId = item.ApplicationId,
+                    ApplicationRefNumber = item.Application?.ApplicationNumber,
+                    PreviousReviewerId = reviewerId,
+                    PreviousReviewerName = me.Name,
+                    NewReviewerId = low.Id,
+                    NewReviewerName = low.Name,
+                    ReassignmentReason = $"{me.Name} has {me.Open} open items, {low.Name} has {low.Open}",
+                    Success = true
+                });
+                me.Open--; low.Open++;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error getting reassignment candidates for reviewer {reviewerId}: {ex.Message}");
-                throw;
-            }
+            return results;
         }
 
         public async Task<List<CriteriaReassignmentResultDto>> ReassignFromUnavailableReviewersAsync()
         {
+            var results = new List<CriteriaReassignmentResultDto>();
             try
             {
-                var results = new List<CriteriaReassignmentResultDto>();
+                var unavailable = await _availabilityService.GetUnavailableReviewersAsync();
+                var unavailableIds = unavailable.Select(r => r.ReviewerId).ToList();
+                if (!unavailableIds.Any()) return results;
 
-                var unavailableReviewers = await _availabilityService.GetUnavailableReviewersAsync();
-                var unavailableReviewerIds = unavailableReviewers.Select(r => r.ReviewerId).ToList();
-
-                if (!unavailableReviewerIds.Any())
+                var pool = (await GetAvailablePoolAsync()).Where(p => !unavailableIds.Contains(p.Id)).ToList();
+                if (pool.Count == 0)
                 {
-                    _logger.LogInformation("No unavailable reviewers found for reassignment");
+                    _logger.LogWarning("No available reviewer to take work from unavailable reviewers");
                     return results;
                 }
 
-                var assignmentsToReassign = await _context.ApplicationAssignments
-                    .Where(a => unavailableReviewerIds.Contains(a.ReviewerId) && a.IsActive)
+                var items = await _context.ApplicationAssignments
                     .Include(a => a.Application)
                     .Include(a => a.Reviewer)
+                    .Where(a => unavailableIds.Contains(a.ReviewerId))
+                    .Where(OpenWorkload.Open)
+                    .OrderBy(a => a.AssignedAt)
                     .ToListAsync();
 
-                // Get available reviewers with lowest workload
-                var availableReviewers = await _context.ApplicationAssignments
-                    .Where(a => !unavailableReviewerIds.Contains(a.ReviewerId) && a.IsActive)
-                    .GroupBy(a => a.ReviewerId)
-                    .Select(g => new { ReviewerId = g.Key, Workload = g.Count() })
-                    .OrderBy(g => g.Workload)
-                    .ToListAsync();
-
-                var assignmentIndex = 0;
-                foreach (var assignment in assignmentsToReassign)
+                foreach (var item in items)
                 {
-                    var targetReviewer = availableReviewers[assignmentIndex % availableReviewers.Count];
-
-                    var reassignmentResult = await ExecuteReassignmentAsync(
-                        assignment,
-                        targetReviewer.ReviewerId,
-                        "AvailabilityChange",
-                        $"Original reviewer unavailable");
-
-                    results.Add(reassignmentResult);
-                    assignmentIndex++;
+                    var target = pool.OrderBy(p => p.Open).First();
+                    var previousName = ((item.Reviewer?.FirstName ?? "") + " " + (item.Reviewer?.LastName ?? "")).Trim();
+                    var result = await MoveAsync(item, target.Id, target.Name, previousName, "AvailabilityChange", "Original reviewer unavailable", null);
+                    results.Add(result);
+                    if (result.Success) target.Open++;
                 }
 
                 _logger.LogInformation($"Reassigned {results.Count(r => r.Success)} applications from unavailable reviewers");
-
                 return results;
             }
             catch (Exception ex)
@@ -246,49 +220,31 @@ namespace MMGT.API.Services
             }
         }
 
-        public async Task<List<CriteriaReassignmentResultDto>> AutoBalanceWorkloadAsync()
+        public async Task<List<CriteriaReassignmentResultDto>> AutoBalanceWorkloadAsync(Guid? performedBy = null)
         {
-            var criteria = new ReassignmentCriteriaDto
-            {
-                WorkloadThresholdPercentage = 75,
-                ReassignIfUnavailable = true,
-                TargetWorkloadMaxPercentage = 50,
-                PrioritizeHighPerformers = true,
-                MinimumApprovalRatePercentage = 70,
-                MaxReassignments = 50
-            };
-
-            return await ExecuteReassignmentsByCriteriaAsync(criteria);
+            var criteria = new ReassignmentCriteriaDto { MaxReassignments = 50, MaxDifference = 3 };
+            return await ExecuteReassignmentsByCriteriaAsync(criteria, performedBy);
         }
 
         public async Task<(bool IsValid, string Reason)> ValidateReassignmentAsync(Guid applicationId, Guid currentReviewerId, Guid newReviewerId)
         {
             try
             {
-                // Check if application exists
                 var application = await _context.Applications.FirstOrDefaultAsync(a => a.Id == applicationId);
-                if (application == null)
-                    return (false, "Application not found");
+                if (application == null) return (false, "Application not found");
+                if (application.IsLocked) return (false, "Application is locked");
 
-                // Check if current assignment exists
                 var currentAssignment = await _context.ApplicationAssignments
-                    .FirstOrDefaultAsync(a => a.ApplicationId == applicationId && a.ReviewerId == currentReviewerId);
-                if (currentAssignment == null)
-                    return (false, "Current assignment not found");
+                    .FirstOrDefaultAsync(a => a.ApplicationId == applicationId && a.ReviewerId == currentReviewerId && a.IsActive);
+                if (currentAssignment == null) return (false, "Current assignment not found");
 
-                // Check if new reviewer exists
                 var newReviewer = await _context.Users.FirstOrDefaultAsync(u => u.Id == newReviewerId);
-                if (newReviewer == null)
-                    return (false, "New reviewer not found");
+                if (newReviewer == null || !newReviewer.IsActive) return (false, "New reviewer not found or inactive");
 
-                // Check if new reviewer is available
-                var isAvailable = await _availabilityService.IsReviewerAvailableAsync(newReviewerId);
-                if (!isAvailable)
+                if (!await _availabilityService.IsReviewerAvailableAsync(newReviewerId))
                     return (false, "New reviewer is currently unavailable");
 
-                // Check if new reviewer has admin role (per assignment rules)
-                if (newReviewer.Role != "ADMIN")
-                    return (false, "Target reviewer must have ADMIN role");
+                if (newReviewer.Role != "ADMIN") return (false, "Target reviewer must have ADMIN role");
 
                 return (true, "Reassignment is valid");
             }
@@ -299,88 +255,77 @@ namespace MMGT.API.Services
             }
         }
 
-        private List<dynamic> GetEligibleTargetReviewers(
-            List<dynamic> reviewerWorkloads,
-            Guid excludeReviewerId,
-            double targetMaxWorkload,
-            ReassignmentCriteriaDto criteria,
-            List<ReviewerPerformanceMetrics> performanceMetrics)
-        {
-            var candidates = new List<dynamic>();
+        private static string Cut(string text, int max) => text.Length <= max ? text : text.Substring(0, max);
 
-            foreach (var reviewer in reviewerWorkloads.Where(r => r.ReviewerId != excludeReviewerId && r.Workload < targetMaxWorkload))
+        /// <summary>Close the old assignment, create a new one and write a history row, all in one transaction.</summary>
+        private async Task<CriteriaReassignmentResultDto> MoveAsync(
+            ApplicationAssignment old, Guid newReviewerId, string newName, string previousName,
+            string reason, string details, Guid? performedBy)
+        {
+            var dto = new CriteriaReassignmentResultDto
             {
-                var performance = performanceMetrics.FirstOrDefault(p => p.ReviewerId == reviewer.ReviewerId);
+                ApplicationId = old.ApplicationId,
+                ApplicationRefNumber = old.Application?.ApplicationNumber,
+                PreviousReviewerId = old.ReviewerId,
+                PreviousReviewerName = previousName,
+                NewReviewerId = newReviewerId,
+                NewReviewerName = newName,
+                ReassignmentReason = details
+            };
 
-                if (criteria.PrioritizeHighPerformers && performance != null &&
-                    performance.ApprovalRatePercentage >= criteria.MinimumApprovalRatePercentage)
-                {
-                    candidates.Add(reviewer);
-                }
-                else if (!criteria.PrioritizeHighPerformers)
-                {
-                    candidates.Add(reviewer);
-                }
-            }
-
-            return candidates.OrderBy(c => c.Workload).ToList();
-        }
-
-        private async Task<CriteriaReassignmentResultDto> ExecuteReassignmentAsync(
-            ApplicationAssignment assignment,
-            Guid newReviewerId,
-            string reason,
-            string details)
-        {
             try
             {
-                var newReviewer = await _context.Users.FirstOrDefaultAsync(u => u.Id == newReviewerId);
-
-                // Create reassignment history entry
-                var reassignmentHistory = new ReassignmentHistory
+                if (old.Application == null || old.Application.IsLocked)
                 {
-                    ApplicationAssignmentId = assignment.Id,
-                    ApplicationId = assignment.ApplicationId,
-                    PreviousReviewerId = assignment.ReviewerId,
-                    NewReviewerId = newReviewerId,
-                    ReassignmentReason = reason,
-                    ReassignmentDetails = details,
-                    ReassignedAt = DateTime.UtcNow,
-                    PreviousAssignmentStatus = assignment.IsActive ? "Active" : "Inactive",
-                    IsCompleted = true
+                    dto.Success = false;
+                    dto.ErrorMessage = "Application is locked or missing";
+                    return dto;
+                }
+
+                var previousReviewerId = old.ReviewerId;
+                using var tx = await _context.Database.BeginTransactionAsync();
+
+                old.IsActive = false;
+                var created = new ApplicationAssignment
+                {
+                    Id = Guid.NewGuid(),
+                    ApplicationId = old.ApplicationId,
+                    ReviewerId = newReviewerId,
+                    AssignedBy = performedBy,
+                    AssignedAt = DateTime.UtcNow,
+                    ReassignmentReason = Cut(details, 500),
+                    IsActive = true
                 };
-
-                // Update assignment
-                assignment.ReviewerId = newReviewerId;
-                assignment.AssignedAt = DateTime.UtcNow;
-                reassignmentHistory.NewAssignmentStatus = assignment.IsActive ? "Active" : "Inactive";
-
-                _context.ReassignmentHistories.Add(reassignmentHistory);
+                _context.ApplicationAssignments.Add(created);
                 await _context.SaveChangesAsync();
 
-                return new CriteriaReassignmentResultDto
+                _context.ReassignmentHistories.Add(new ReassignmentHistory
                 {
-                    ApplicationId = assignment.ApplicationId,
-                    ApplicationRefNumber = assignment.Application?.ApplicationNumber,
-                    PreviousReviewerId = assignment.ReviewerId,
-                    PreviousReviewerName = assignment.Reviewer?.FirstName + " " + assignment.Reviewer?.LastName,
+                    ApplicationAssignmentId = created.Id,
+                    ApplicationId = old.ApplicationId,
+                    PreviousReviewerId = previousReviewerId,
                     NewReviewerId = newReviewerId,
-                    NewReviewerName = newReviewer?.FirstName + " " + newReviewer?.LastName,
-                    ReassignmentReason = reason,
-                    Success = true
-                };
+                    ReassignmentReason = Cut(reason, 50),
+                    ReassignmentDetails = Cut(details, 500),
+                    ReassignedAt = DateTime.UtcNow,
+                    ReassignedByUserId = performedBy,
+                    PreviousAssignmentStatus = "Active",
+                    NewAssignmentStatus = "Active",
+                    IsCompleted = true
+                });
+                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                dto.Success = true;
+                return dto;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error executing reassignment for application {assignment.ApplicationId}: {ex.Message}");
-                return new CriteriaReassignmentResultDto
-                {
-                    ApplicationId = assignment.ApplicationId,
-                    ApplicationRefNumber = assignment.Application?.ApplicationNumber,
-                    PreviousReviewerId = assignment.ReviewerId,
-                    Success = false,
-                    ErrorMessage = ex.Message
-                };
+                _context.ChangeTracker.Clear();
+                _logger.LogError($"Error moving application {old.ApplicationId}: {ex.Message}");
+                dto.Success = false;
+                dto.ErrorMessage = ex.Message;
+                return dto;
             }
         }
     }

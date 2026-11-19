@@ -16,6 +16,28 @@ namespace MMGT.API.Services.Interfaces
         public double ImprovementPercentage { get; set; }
     }
 
+    public class WorkloadReviewerSummaryDto
+    {
+        public Guid ReviewerId { get; set; }
+        public string ReviewerName { get; set; } = string.Empty;
+        public int OpenNow { get; set; }
+        public int OpenAfter { get; set; }
+        public int Change { get; set; }
+        public bool IsAvailable { get; set; }
+    }
+    
+    public class WorkloadMoveDto
+    {
+        public Guid FromReviewerId { get; set; }
+        public string FromReviewerName { get; set; } = string.Empty;
+        public int FromOpenNow { get; set; }
+        public Guid ToReviewerId { get; set; }
+        public string ToReviewerName { get; set; } = string.Empty;
+        public int ToOpenNow { get; set; }
+        public int Count { get; set; }
+        public List<string> ApplicationRefs { get; set; } = new();
+    }
+    
     public class WorkloadBalancingSummaryDto
     {
         public int TotalApplications { get; set; }
@@ -26,6 +48,10 @@ namespace MMGT.API.Services.Interfaces
         public double WorkloadStandardDeviation { get; set; }
         public List<WorkloadSuggestionDto> Suggestions { get; set; } = new();
         public bool IsBalanced { get; set; }
+        public string Headline { get; set; } = string.Empty;
+        public int AvailableReviewers { get; set; }
+        public List<WorkloadReviewerSummaryDto> ReviewerSummary { get; set; } = new();
+        public List<WorkloadMoveDto> Moves { get; set; } = new();
     }
 
     public interface IWorkloadSuggestionService

@@ -44,6 +44,11 @@ namespace MMGT.API.Services.Interfaces
         /// Maximum number of applications to reassign
         /// </summary>
         public int MaxReassignments { get; set; } = 20;
+        /// <summary>Largest difference in open items allowed between reviewers before work is moved.</summary>
+        public int MaxDifference { get; set; } = 3;
+
+        /// <summary>Only work out the moves and return them; do not make them.</summary>
+        public bool PreviewOnly { get; set; } = false;
     }
 
     public interface ICriteriaBasedReassignmentService
@@ -51,7 +56,7 @@ namespace MMGT.API.Services.Interfaces
         /// <summary>
         /// Execute reassignments based on predefined criteria
         /// </summary>
-        Task<List<CriteriaReassignmentResultDto>> ExecuteReassignmentsByCriteriaAsync(ReassignmentCriteriaDto criteria);
+        Task<List<CriteriaReassignmentResultDto>> ExecuteReassignmentsByCriteriaAsync(ReassignmentCriteriaDto criteria, Guid? performedBy = null);
 
         /// <summary>
         /// Get applications that meet reassignment criteria for a specific reviewer
@@ -66,7 +71,7 @@ namespace MMGT.API.Services.Interfaces
         /// <summary>
         /// Auto-balance workload across all reviewers
         /// </summary>
-        Task<List<CriteriaReassignmentResultDto>> AutoBalanceWorkloadAsync();
+        Task<List<CriteriaReassignmentResultDto>> AutoBalanceWorkloadAsync(Guid? performedBy = null);
 
         /// <summary>
         /// Validate if a reassignment would violate any rules

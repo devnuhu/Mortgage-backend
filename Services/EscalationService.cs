@@ -24,8 +24,8 @@ namespace MMGT.API.Services
         Task<List<AssignmentEscalationDto>> GetEscalationsForReviewerAsync(Guid reviewerId);
 
         // Reassignment Management (LEAD_REVIEWER only)
-        Task<bool> ReassignApplicationAsync(Guid assignmentId, Guid newReviewerId, string reason);
-        Task<bool> ReassignMultipleApplicationsAsync(List<Guid> assignmentIds, Guid newReviewerId, string reason);
+        Task<bool> ReassignApplicationAsync(Guid assignmentId, Guid newReviewerId, string reason, Guid? performedBy = null);
+        Task<bool> ReassignMultipleApplicationsAsync(List<Guid> assignmentIds, Guid newReviewerId, string reason, Guid? performedBy = null);
         Task<List<ApplicationAssignment>> GetAssignmentsForReviewerAsync(Guid reviewerId);
         Task<PaginatedApplicationWithAssignmentDto> GetApplicationsForBulkReassignmentAsync(
             int pageNumber,
@@ -39,7 +39,9 @@ namespace MMGT.API.Services
             DateTime? createdDateFrom = null,
             DateTime? createdDateTo = null,
             DateTime? submittedDateFrom = null,
-            DateTime? submittedDateTo = null);
+            DateTime? submittedDateTo = null,
+            bool? isHni = null,
+            bool includeDecided = false);
     }
 
     public class EscalationService : IEscalationService
@@ -348,13 +350,13 @@ namespace MMGT.API.Services
                 // Find reviewer with lowest workload
                 var lowestWorkloadReviewer = reviewers.First();
                 var lowestWorkload = await _context.ApplicationAssignments
-                    .Where(a => a.ReviewerId == lowestWorkloadReviewer.Id && a.IsActive)
+                    .Where(a => a.ReviewerId == lowestWorkloadReviewer.Id).Where(OpenWorkload.Open)
                     .CountAsync();
 
                 foreach (var reviewer in reviewers.Skip(1))
                 {
                     var workload = await _context.ApplicationAssignments
-                        .Where(a => a.ReviewerId == reviewer.Id && a.IsActive)
+                        .Where(a => a.ReviewerId == reviewer.Id).Where(OpenWorkload.Open)
                         .CountAsync();
 
                     if (workload < lowestWorkload)
@@ -552,7 +554,7 @@ namespace MMGT.API.Services
         /// <summary>
         /// Reassign a single application from one reviewer to another (LEAD_REVIEWER only)
         /// </summary>
-        public async Task<bool> ReassignApplicationAsync(Guid assignmentId, Guid newReviewerId, string reason)
+        public async Task<bool> ReassignApplicationAsync(Guid assignmentId, Guid newReviewerId, string reason, Guid? performedBy = null)
         {
             try
             {
@@ -576,6 +578,12 @@ namespace MMGT.API.Services
                     return false;
                 }
 
+                if (!assignment.IsActive || (assignment.Application != null && (assignment.Application.IsLocked
+                    || assignment.Application.Status == "approved" || assignment.Application.Status == "rejected" || assignment.Application.Status == "completed")))
+                {
+                    _logger.LogWarning($"Assignment {assignmentId} not reassigned: it is inactive, or the application is locked or already decided");
+                    return false;
+                }
                 // Store old reviewer for tracking
                 var oldReviewerId = assignment.ReviewerId;
 
@@ -588,6 +596,7 @@ namespace MMGT.API.Services
                     NewReviewerId = newReviewerId,
                     ReassignmentReason = reason,
                     ReassignmentDetails = reason,
+                        ReassignedByUserId = performedBy,
                     ReassignedAt = DateTime.UtcNow,
                     PreviousAssignmentStatus = assignment.IsActive ? "Active" : "Inactive",
                     IsCompleted = true
@@ -617,7 +626,7 @@ namespace MMGT.API.Services
         /// <summary>
         /// Reassign multiple applications from one reviewer to another (LEAD_REVIEWER only - bulk operation)
         /// </summary>
-        public async Task<bool> ReassignMultipleApplicationsAsync(List<Guid> assignmentIds, Guid newReviewerId, string reason)
+        public async Task<bool> ReassignMultipleApplicationsAsync(List<Guid> assignmentIds, Guid newReviewerId, string reason, Guid? performedBy = null)
         {
             try
             {
@@ -635,11 +644,12 @@ namespace MMGT.API.Services
                 var idSet = new HashSet<Guid>(assignmentIds);
 
                 var assignments = await _context.ApplicationAssignments
+                    .Where(a => a.IsActive)
                     .Include(a => a.Application)
                     .ToListAsync();
 
                 // Filter in memory to avoid EF Core translation issues
-                var matchingAssignments = assignments.Where(a => idSet.Contains(a.Id)).ToList();
+                var matchingAssignments = assignments.Where(a => a.IsActive && idSet.Contains(a.Id)).ToList();
 
                 if (!matchingAssignments.Any())
                 {
@@ -653,6 +663,12 @@ namespace MMGT.API.Services
 
                 foreach (var assignment in matchingAssignments)
                 {
+                    if (assignment.Application != null && (assignment.Application.IsLocked
+                        || assignment.Application.Status == "approved" || assignment.Application.Status == "rejected" || assignment.Application.Status == "completed"))
+                    {
+                        _logger.LogWarning($"Assignment {assignment.Id} skipped: the application is locked or already decided");
+                        continue;
+                    }
                     var oldReviewerId = assignment.ReviewerId;
                     oldReviewerIds.Add(oldReviewerId);
 
@@ -665,6 +681,7 @@ namespace MMGT.API.Services
                         NewReviewerId = newReviewerId,
                         ReassignmentReason = reason,
                         ReassignmentDetails = reason,
+                        ReassignedByUserId = performedBy,
                         ReassignedAt = DateTime.UtcNow,
                         PreviousAssignmentStatus = assignment.IsActive ? "Active" : "Inactive",
                         IsCompleted = true
@@ -680,7 +697,7 @@ namespace MMGT.API.Services
                         Id = Guid.NewGuid(),
                         ApplicationId = assignment.ApplicationId,
                         ReviewerId = newReviewerId,
-                        AssignedBy = null, // System-initiated reassignment
+                        AssignedBy = performedBy,
                         AssignedAt = DateTime.UtcNow,
                         ReassignmentReason = reason,
                         IsActive = true
@@ -694,6 +711,11 @@ namespace MMGT.API.Services
                     _logger.LogInformation($"Application assignment {assignment.Id} deactivated and reassigned from reviewer {oldReviewerId} to {newReviewerId}. New assignment: {newAssignment.Id}. Reason: {reason}");
                 }
 
+                if (reassignedCount == 0)
+                {
+                    _logger.LogWarning("No application was reassigned: all were locked or already decided");
+                    return false;
+                }
                 // Save all reassignment histories and assignment updates together
                 foreach (var history in reassignmentHistories)
                 {
@@ -758,7 +780,9 @@ namespace MMGT.API.Services
             DateTime? createdDateFrom = null,
             DateTime? createdDateTo = null,
             DateTime? submittedDateFrom = null,
-            DateTime? submittedDateTo = null)
+            DateTime? submittedDateTo = null,
+            bool? isHni = null,
+            bool includeDecided = false)
         {
             try
             {
@@ -767,7 +791,7 @@ namespace MMGT.API.Services
 
                 // Get all applications with their current active assignments
                 var query = _context.ApplicationAssignments
-                    .Where(a => a.IsActive)
+                    .Where(includeDecided ? OpenWorkload.Active : OpenWorkload.Open)
                     .Include(a => a.Application)
                     .Include(a => a.Reviewer)
                     .AsNoTracking();
@@ -799,29 +823,35 @@ namespace MMGT.API.Services
                 // Filter by Created Date Range if specified
                 if (createdDateFrom.HasValue)
                 {
-                    query = query.Where(a => a.Application != null && a.Application.CreatedAt >= createdDateFrom.Value);
+                    query = query.Where(a => a.Application != null && a.Application.CreatedAt >= createdDateFrom.Value.Date.AddHours(-1));
                 }
                 if (createdDateTo.HasValue)
                 {
                     // Add 1 day to include the entire end date
-                    query = query.Where(a => a.Application != null && a.Application.CreatedAt < createdDateTo.Value.AddDays(1));
+                    query = query.Where(a => a.Application != null && a.Application.CreatedAt < createdDateTo.Value.Date.AddDays(1).AddHours(-1));
                 }
 
                 // Filter by Submitted Date Range if specified
                 if (submittedDateFrom.HasValue)
                 {
-                    query = query.Where(a => a.Application != null && a.Application.SubmittedAt >= submittedDateFrom.Value);
+                    query = query.Where(a => a.Application != null && a.Application.SubmittedAt >= submittedDateFrom.Value.Date.AddHours(-1));
                 }
                 if (submittedDateTo.HasValue)
                 {
                     // Add 1 day to include the entire end date
-                    query = query.Where(a => a.Application != null && a.Application.SubmittedAt < submittedDateTo.Value.AddDays(1));
+                    query = query.Where(a => a.Application != null && a.Application.SubmittedAt < submittedDateTo.Value.Date.AddDays(1).AddHours(-1));
                 }
 
+                // Filter by HNI flag if specified (true = HNI only, false = known non-HNI only; applications not yet checked are in neither)
+                if (isHni.HasValue)
+                {
+                    var wantHni = isHni.Value;
+                    query = query.Where(a => a.Application != null && a.Application.IsHni == wantHni);
+                }
                 // Apply sorting
                 query = sortBy?.ToLower() switch
                 {
-                    "assignedfohours" or "duration" => sortDescending
+                    "assignedfohours" or "assignedhours" or "duration" => sortDescending
                         ? query.OrderByDescending(a => EF.Functions.DateDiffSecond(a.AssignedAt, DateTime.UtcNow))
                         : query.OrderBy(a => EF.Functions.DateDiffSecond(a.AssignedAt, DateTime.UtcNow)),
 
@@ -839,6 +869,7 @@ namespace MMGT.API.Services
 
                     _ => query.OrderBy(a => a.Application!.ApplicationNumber)
                 };
+                query = ((IOrderedQueryable<ApplicationAssignment>)query).ThenBy(a => a.Id);
 
                 // Get total count before pagination
                 var totalCount = await query.CountAsync();
@@ -872,12 +903,12 @@ namespace MMGT.API.Services
                     ReassignmentReason = a.ReassignmentReason,
                     AssignedBy = a.AssignedBy ?? Guid.Empty,
                     ApplicationCreatedAt = a.Application?.CreatedAt ?? DateTime.MinValue,
-                    ApplicationSubmittedAt = a.Application?.SubmittedAt
+                    ApplicationSubmittedAt = a.Application?.SubmittedAt, IsHni = a.Application?.IsHni, HniCheckedAt = a.Application?.HniCheckedAt
                 }).ToList();
 
                 // Calculate summary statistics
                 var allAssignments = await _context.ApplicationAssignments
-                    .Where(a => a.IsActive)
+                    .Where(OpenWorkload.Open)
                     .Include(a => a.Application)
                     .Include(a => a.Reviewer)
                     .AsNoTracking()
@@ -894,14 +925,30 @@ namespace MMGT.API.Services
                         AverageAssignedHours = Math.Round(g.Average(a => (now - a.AssignedAt).TotalHours), 2)
                     })
                     .ToList();
+                        // Include available reviewers with no open work, so the Lead Reviewer can see who has room.
+                        var withWork = reviewerWorkloads.Select(r => r.ReviewerId).ToHashSet();
+                        var allReviewers = await _context.Users.AsNoTracking().Where(u => u.IsActive && u.Role == "ADMIN").ToListAsync();
+                        var idleReviewers = allReviewers.Where(u => !withWork.Contains(u.Id)).ToList();
+                        foreach (var idle in idleReviewers)
+                        {
+                            reviewerWorkloads.Add(new ReviewerWorkloadSummaryDto
+                            {
+                                ReviewerId = idle.Id,
+                                ReviewerName = $"{idle.FirstName} {idle.LastName}",
+                                ReviewerEmail = idle.Email ?? string.Empty,
+                                AssignmentCount = 0,
+                                AverageAssignedHours = 0
+                            });
+                        }
+                        reviewerWorkloads = reviewerWorkloads.OrderBy(r => r.ReviewerName).ToList();
 
                 var summary = new AssignmentSummaryDto
                 {
-                    TotalActiveApplications = totalCount,
+                    TotalActiveApplications = allAssignments.Count,
                     TotalAssignments = totalCount,
                     UniqueReviewerCount = reviewerWorkloads.Count,
                     AverageAssignedHours = allAssignments.Any() ? Math.Round(allAssignments.Average(a => (now - a.AssignedAt).TotalHours), 2) : 0,
-                    OverdueApplicationsCount = allAssignments.Count(a => (now - a.AssignedAt).TotalHours > 72), // More than 72 hours
+                    OverdueApplicationsCount = allAssignments.Count(a => (now - a.AssignedAt).TotalHours > 48), // Open for more than 2 days (the review target)
                     ReviewerWorkloads = reviewerWorkloads
                 };
 

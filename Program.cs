@@ -6,14 +6,20 @@ using MMGT.API.Data;
 using MMGT.API.Helpers;
 using MMGT.API.Services;
 using MMGT.API.Services.Interfaces;
+using MMGT.API.Services.Email;
 using MMGT.API.Middleware;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+MMGT.API.Services.NotificationSwitches.EmailOnResubmission = builder.Configuration.GetValue<bool>("Notifications:EmailOnResubmission", false);
 
 // Add services to the container.
 // register typed HttpClient for Infobip email service
-builder.Services.AddHttpClient<IEmailService, InfobipEmailService>()
+EmailBrand.Current = EmailBrand.FromConfiguration(builder.Configuration);
+if (string.Equals(builder.Configuration["EmailSettings:Provider"], "Off", StringComparison.OrdinalIgnoreCase))
+    builder.Services.AddScoped<IEmailService, NullEmailService>();
+else
+    builder.Services.AddHttpClient<IEmailService, InfobipEmailService>()
     .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(10));
 
 builder.Services.AddControllers();
@@ -64,7 +70,8 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
         builder.Configuration.GetConnectionString("DefaultConnection"),
         sqlServerOptions => sqlServerOptions
             .EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)
-            .CommandTimeout(300))
+            .CommandTimeout(300)
+            .UseCompatibilityLevel(120))
 );
 
 // Add SMS Notification DbContext (SMSNotification database) with connection pooling
@@ -110,8 +117,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
     {
-        policy.WithOrigins(
-            "https://accessmortgage.access-armpensions.com",
+        policy.WithOrigins(            
             "https://accessmortgage.accesspensions.ng",
             "http://172.16.50.32:8097",
             "https://172.16.50.32:8097",
@@ -138,7 +144,14 @@ builder.Services.AddScoped<IEscalationService, EscalationService>();
 
 // Services that depend on Performance services
 builder.Services.AddHttpClient<ICpasBiodataService, CpasBiodataService>();
+builder.Services.AddHttpClient<IHniService, HniService>(c => c.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddHttpClient<ICpasCaseStatusService, CpasCaseStatusService>(c => c.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddHostedService<HniRefreshBackgroundService>();
+builder.Services.AddHostedService<CpasAutoApproveBackgroundService>();
 builder.Services.AddScoped<IApplicationService, ApplicationService>();
+builder.Services.AddScoped<IStepDownService, StepDownService>();
+builder.Services.AddHttpClient<IStepDownNotifier, StepDownNotifier>(c => c.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddHttpClient<IAccountEmailService, AccountEmailService>(c => c.Timeout = TimeSpan.FromSeconds(30));
 builder.Services.AddScoped<IFileService, FileService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<ISmsService, SmsService>();
@@ -157,6 +170,7 @@ builder.Services.AddScoped<ICriteriaBasedReassignmentService, CriteriaBasedReass
 
 // Add BackgroundService for periodic escalation checks
 builder.Services.AddHostedService<EscalationCheckBackgroundService>();
+builder.Services.AddHostedService<DraftExpiryBackgroundService>();
 
 // Add JWT Helper
 builder.Services.AddScoped<JwtHelper>();
@@ -182,6 +196,8 @@ app.UseHttpsRedirection();
 app.UseStaticFiles();
 
 app.UseAuthentication();
+// Refuse requests from deactivated users straight away (their login token may still be unexpired).
+app.UseMiddleware<MMGT.API.Services.ActiveUserMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
@@ -190,7 +206,25 @@ app.MapControllers();
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    await context.Database.MigrateAsync();
+    // Schema changes are applied by a reviewed SQL script in production.
+
+    // Auto-migrate runs only when Database:AutoMigrate is true (set in appsettings.Development.json).
+
+    if (string.Equals(app.Configuration["Database:AutoMigrate"], "true", StringComparison.OrdinalIgnoreCase))
+
+    {
+
+        await context.Database.MigrateAsync();
+
+    }
+
+    else
+
+    {
+
+        Console.WriteLine("[Startup] Database:AutoMigrate is off. Schema changes are applied by script.");
+
+    }
     await DbSeeder.SeedAsync(context);
 }
 

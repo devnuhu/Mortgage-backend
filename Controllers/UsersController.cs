@@ -38,13 +38,13 @@ namespace MMGT.API.Controllers
 
         [HttpGet]
         [Authorize(Roles = "SUPER_ADMIN")]
-        public async Task<ActionResult<List<UserDto>>> GetAllUsers()
+        public async Task<ActionResult<List<UserDto>>> GetAllUsers([FromQuery] bool includeInactive = false)
         {
             try
             {
                 var users = await _context.Users
                     .Include(u => u.PMICompany)
-                    .Where(u => u.IsActive)
+                    .Where(u => includeInactive || u.IsActive)
                     .Select(u => new UserDto
                     {
                         Id = u.Id,
@@ -193,6 +193,28 @@ namespace MMGT.API.Controllers
             }
         }
 
+        [HttpPatch("{id}/status")]
+        [Authorize(Roles = "SUPER_ADMIN")]
+        public async Task<ActionResult> SetUserStatus(Guid id, [FromBody] UpdateUserStatusRequest request)
+        {
+            try
+            {
+                var ok = await _userService.SetUserActiveAsync(GetCurrentUserId(), id, request.IsActive, request.Reason);
+                if (!ok)
+                    return NotFound(new { message = "User not found" });
+        
+                return Ok(new
+                {
+                    message = request.IsActive ? "User reactivated." : "User deactivated. They can no longer sign in.",
+                    isActive = request.IsActive
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+        
         [HttpDelete("{id}")]
         [Authorize(Roles = "SUPER_ADMIN")]
         public async Task<ActionResult> DeleteUser(Guid id)

@@ -1,0 +1,2138 @@
+﻿Collected 2026-11-13T10:54:08
+
+===== \Controllers\AnalyticsController.cs =====
+   1: using Microsoft.AspNetCore.Authorization;
+   2: using Microsoft.AspNetCore.Mvc;
+   3: using Microsoft.EntityFrameworkCore;
+   4: using MMGT.API.Data;
+   5: using MMGT.API.DTOs.Performance;
+   6: using MMGT.API.DTOs.Escalation;
+   7: using MMGT.API.DTOs.Availability;
+   8: using MMGT.API.DTOs.Workload;
+   9: using MMGT.API.DTOs.Assignment;
+  10: using MMGT.API.Services;
+  11: using MMGT.API.Services.Interfaces;
+  12: 
+  13: namespace MMGT.API.Controllers
+  14: {
+  15:     [ApiController]
+  16:     [Route("api/[controller]")]
+  17:     public class AnalyticsController : ControllerBase
+  18:     {
+  19:         private readonly IReviewerPerformanceService _performanceService;
+  20:         private readonly IEscalationService _escalationService;
+  21:         private readonly IReviewerAvailabilityService _reviewerAvailabilityService;
+  22:         private readonly IWorkloadSuggestionService _workloadSuggestionService;
+  23:         private readonly ICriteriaBasedReassignmentService _criteriaBasedReassignmentService;
+  24:         private readonly ApplicationDbContext _context;
+  25:         private readonly ILogger<AnalyticsController> _logger;
+  26: 
+  27:         public AnalyticsController(
+  28:             IReviewerPerformanceService performanceService,
+  29:             IEscalationService escalationService,
+  30:             IReviewerAvailabilityService reviewerAvailabilityService,
+  31:             IWorkloadSuggestionService workloadSuggestionService,
+  32:             ICriteriaBasedReassignmentService criteriaBasedReassignmentService,
+  33:             ApplicationDbContext context,
+  34:             ILogger<AnalyticsController> logger)
+  35:         {
+  36:             _performanceService = performanceService;
+  37:             _escalationService = escalationService;
+  38:             _reviewerAvailabilityService = reviewerAvailabilityService;
+  39:             _workloadSuggestionService = workloadSuggestionService;
+  40:             _criteriaBasedReassignmentService = criteriaBasedReassignmentService;
+  41:             _context = context;
+  42:             _logger = logger;
+  43:         }
+  44: 
+  45:         #region Performance Metrics
+  46: 
+  47:         /// <summary>
+  48:         /// Get performance metrics for a specific reviewer
+  49:         /// </summary>
+  50:         [HttpGet("reviewer/{reviewerId}/performance")]
+  51:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+  52:         public async Task<ActionResult<ReviewerPerformanceMetricsDto>> GetReviewerPerformance(Guid reviewerId)
+  53:         {
+  54:             try
+  55:             {
+  56:                 var metrics = await _performanceService.GetReviewerMetricsAsync(reviewerId);
+  57:                 return Ok(metrics);
+  58:             }
+  59:             catch (Exception ex)
+  60:             {
+  61:                 return BadRequest(new { message = ex.Message });
+  62:             }
+  63:         }
+  64: 
+  65:         /// <summary>
+  66:         /// Get performance metrics for all reviewers
+  67:         /// </summary>
+  68:         [HttpGet("performance/all")]
+  69:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+  70:         public async Task<ActionResult<List<ReviewerPerformanceMetricsDto>>> GetAllReviewersPerformance()
+  71:         {
+  72:             try
+  73:             {
+  74:                 var metrics = await _performanceService.GetAllReviewersMetricsAsync();
+  75:                 return Ok(metrics);
+  76:             }
+  77:             catch (Exception ex)
+  78:             {
+  79:                 return BadRequest(new { message = ex.Message });
+  80:             }
+  81:         }
+  82: 
+  83:         /// <summary>
+  84:         /// Get top performing reviewers
+  85:         /// </summary>
+  86:         [HttpGet("performance/top")]
+  87:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+  88:         public async Task<ActionResult<List<ReviewerPerformanceMetricsDto>>> GetTopPerformers([FromQuery] int count = 5)
+  89:         {
+  90:             try
+  91:             {
+  92:                 var metrics = await _performanceService.GetTopPerformersAsync(count);
+  93:                 return Ok(metrics);
+  94:             }
+  95:             catch (Exception ex)
+  96:             {
+  97:                 return BadRequest(new { message = ex.Message });
+  98:             }
+  99:         }
+ 100: 
+ 101:         /// <summary>
+ 102:         /// Get bottom performing reviewers
+ 103:         /// </summary>
+ 104:         [HttpGet("performance/bottom")]
+ 105:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 106:         public async Task<ActionResult<List<ReviewerPerformanceMetricsDto>>> GetBottomPerformers([FromQuery] int count = 5)
+ 107:         {
+ 108:             try
+ 109:             {
+ 110:                 var metrics = await _performanceService.GetBottomPerformersAsync(count);
+ 111:                 return Ok(metrics);
+ 112:             }
+ 113:             catch (Exception ex)
+ 114:             {
+ 115:                 return BadRequest(new { message = ex.Message });
+ 116:             }
+ 117:         }
+ 118: 
+ 119:         /// <summary>
+ 120:         /// Get average turnaround time for a reviewer (last N days)
+ 121:         /// </summary>
+ 122:         [HttpGet("reviewer/{reviewerId}/turnaround-time")]
+ 123:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 124:         public async Task<ActionResult<object>> GetReviewerTurnaroundTime(Guid reviewerId, [FromQuery] int days = 30)
+ 125:         {
+ 126:             try
+ 127:             {
+ 128:                 var avgTurnaroundHours = await _performanceService.GetAverageTurnaroundTimeAsync(reviewerId, days);
+ 129:                 return Ok(new
+ 130:                 {
+ 131:                     reviewerId,
+ 132:                     days,
+ 133:                     averageTurnaroundTimeHours = Math.Round(avgTurnaroundHours, 2),
+ 134:                     averageTurnaroundTimeDays = Math.Round(avgTurnaroundHours / 24, 2)
+ 135:                 });
+ 136:             }
+ 137:             catch (Exception ex)
+ 138:             {
+ 139:                 return BadRequest(new { message = ex.Message });
+ 140:             }
+ 141:         }
+ 142: 
+ 143:         /// <summary>
+ 144:         /// Recalculate performance metrics for a specific reviewer
+ 145:         /// </summary>
+ 146:         [HttpPost("reviewer/{reviewerId}/recalculate-metrics")]
+ 147:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 148:         public async Task<ActionResult> RecalculateReviewerMetrics(Guid reviewerId)
+ 149:         {
+ 150:             try
+ 151:             {
+ 152:                 await _performanceService.RecalculateMetricsAsync(reviewerId);
+ 153:                 return Ok(new { message = "Metrics recalculated successfully" });
+ 154:             }
+ 155:             catch (Exception ex)
+ 156:             {
+ 157:                 return BadRequest(new { message = ex.Message });
+ 158:             }
+ 159:         }
+ 160: 
+ 161:         /// <summary>
+ 162:         /// Recalculate metrics for all reviewers
+ 163:         /// </summary>
+ 164:         [HttpPost("performance/recalculate-all")]
+ 165:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 166:         public async Task<ActionResult> RecalculateAllMetrics()
+ 167:         {
+ 168:             try
+ 169:             {
+ 170:                 await _performanceService.RecalculateAllMetricsAsync();
+ 171:                 return Ok(new { message = "Metrics for all reviewers recalculated successfully" });
+ 172:             }
+ 173:             catch (Exception ex)
+ 174:             {
+ 175:                 return BadRequest(new { message = ex.Message });
+ 176:             }
+ 177:         }
+ 178: 
+ 179:         #endregion
+ 180: 
+ 181:         #region Workload Distribution
+ 182: 
+ 183:         /// <summary>
+ 184:         /// Get workload distribution across all reviewers (summary view)
+ 185:         /// </summary>
+ 186:         [HttpGet("workload/distribution")]
+ 187:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 188:         public async Task<ActionResult<WorkloadDistributionSummaryDto>> GetWorkloadDistribution()
+ 189:         {
+ 190:             try
+ 191:             {
+ 192:                 var distribution = await _performanceService.GetWorkloadDistributionAsync();
+ 193:                 return Ok(distribution);
+ 194:             }
+ 195:             catch (Exception ex)
+ 196:             {
+ 197:                 return BadRequest(new { message = ex.Message });
+ 198:             }
+ 199:         }
+ 200: 
+ 201:         /// <summary>
+ 202:         /// Get workload distribution with pagination and sorting
+ 203:         /// Supports sorting by: reviewername, workload, activeassignments, approvalrate, turnaroundtime, performancerating
+ 204:         /// </summary>
+ 205:         [HttpGet("reviewers/workload")]
+ 206:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 207:         public async Task<ActionResult<PaginatedWorkloadDistributionDto>> GetReviewersWorkloadPaged(
+ 208:             [FromQuery] int pageNumber = 1,
+ 209:             [FromQuery] int pageSize = 25,
+ 210:             [FromQuery] string sortBy = "reviewername",
+ 211:             [FromQuery] bool sortDescending = false)
+ 212:         {
+ 213:             try
+ 214:             {
+ 215:                 var distribution = await _performanceService.GetWorkloadDistributionPagedAsync(
+ 216:                     pageNumber,
+ 217:                     pageSize,
+ 218:                     sortBy,
+ 219:                     sortDescending);
+ 220:                 return Ok(distribution);
+ 221:             }
+ 222:             catch (Exception ex)
+ 223:             {
+ 224:                 return BadRequest(new { message = ex.Message });
+ 225:             }
+ 226:         }
+ 227: 
+ 228:         #endregion
+ 229: 
+ 230:         #region Escalation Management
+ 231: 
+ 232:         /// <summary>
+ 233:         /// Get all escalation rules
+ 234:         /// </summary>
+ 235:         [HttpGet("escalation-rules")]
+ 236:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 237:         public async Task<ActionResult<List<EscalationRuleDto>>> GetEscalationRules()
+ 238:         {
+ 239:             try
+ 240:             {
+ 241:                 var rules = await _escalationService.GetAllEscalationRulesAsync();
+ 242:                 return Ok(rules);
+ 243:             }
+ 244:             catch (Exception ex)
+ 245:             {
+ 246:                 return BadRequest(new { message = ex.Message });
+ 247:             }
+ 248:         }
+ 249: 
+ 250:         /// <summary>
+ 251:         /// Create a new escalation rule
+ 252:         /// </summary>
+ 253:         [HttpPost("escalation-rules")]
+ 254:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 255:         public async Task<ActionResult<EscalationRuleDto>> CreateEscalationRule([FromBody] CreateEscalationRuleRequest request)
+ 256:         {
+ 257:             try
+ 258:             {
+ 259:                 var userId = GetCurrentUserId();
+ 260:                 var rule = await _escalationService.CreateEscalationRuleAsync(request, userId);
+ 261:                 return CreatedAtAction(nameof(GetEscalationRule), new { ruleId = rule.Id }, rule);
+ 262:             }
+ 263:             catch (Exception ex)
+ 264:             {
+ 265:                 return BadRequest(new { message = ex.Message });
+ 266:             }
+ 267:         }
+ 268: 
+ 269:         /// <summary>
+ 270:         /// Get a specific escalation rule
+ 271:         /// </summary>
+ 272:         [HttpGet("escalation-rules/{ruleId}")]
+ 273:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 274:         public async Task<ActionResult<EscalationRuleDto>> GetEscalationRule(Guid ruleId)
+ 275:         {
+ 276:             try
+ 277:             {
+ 278:                 var rule = await _escalationService.GetEscalationRuleAsync(ruleId);
+ 279:                 return Ok(rule);
+ 280:             }
+ 281:             catch (Exception ex)
+ 282:             {
+ 283:                 return BadRequest(new { message = ex.Message });
+ 284:             }
+ 285:         }
+ 286: 
+ 287:         /// <summary>
+ 288:         /// Update an escalation rule
+ 289:         /// </summary>
+ 290:         [HttpPut("escalation-rules/{ruleId}")]
+ 291:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 292:         public async Task<ActionResult<EscalationRuleDto>> UpdateEscalationRule(Guid ruleId, [FromBody] UpdateEscalationRuleRequest request)
+ 293:         {
+ 294:             try
+ 295:             {
+ 296:                 var userId = GetCurrentUserId();
+ 297:                 var rule = await _escalationService.UpdateEscalationRuleAsync(ruleId, request, userId);
+ 298:                 return Ok(rule);
+ 299:             }
+ 300:             catch (Exception ex)
+ 301:             {
+ 302:                 return BadRequest(new { message = ex.Message });
+ 303:             }
+ 304:         }
+ 305: 
+ 306:         /// <summary>
+ 307:         /// Delete an escalation rule
+ 308:         /// </summary>
+ 309:         [HttpDelete("escalation-rules/{ruleId}")]
+ 310:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 311:         public async Task<ActionResult> DeleteEscalationRule(Guid ruleId)
+ 312:         {
+ 313:             try
+ 314:             {
+ 315:                 var result = await _escalationService.DeleteEscalationRuleAsync(ruleId);
+ 316:                 if (!result)
+ 317:                     return NotFound(new { message = "Escalation rule not found" });
+ 318: 
+ 319:                 return Ok(new { message = "Escalation rule deleted successfully" });
+ 320:             }
+ 321:             catch (Exception ex)
+ 322:             {
+ 323:                 return BadRequest(new { message = ex.Message });
+ 324:             }
+ 325:         }
+ 326: 
+ 327:         /// <summary>
+ 328:         /// Toggle escalation rule active status
+ 329:         /// </summary>
+ 330:         [HttpPatch("escalation-rules/{ruleId}/toggle")]
+ 331:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 332:         public async Task<ActionResult> ToggleEscalationRule(Guid ruleId, [FromBody] dynamic body)
+ 333:         {
+ 334:             try
+ 335:             {
+ 336:                 // Extract isActive from body
+ 337:                 bool isActive = body?.isActive ?? true;
+ 338: 
+ 339:                 var result = await _escalationService.ToggleEscalationRuleAsync(ruleId, isActive);
+ 340:                 if (!result)
+ 341:                     return NotFound(new { message = "Escalation rule not found" });
+ 342: 
+ 343:                 return Ok(new { message = "Escalation rule status updated successfully", isActive });
+ 344:             }
+ 345:             catch (Exception ex)
+ 346:             {
+ 347:                 return BadRequest(new { message = ex.Message });
+ 348:             }
+ 349:         }
+ 350: 
+ 351:         /// <summary>
+ 352:         /// Check and escalate delayed assignments (manually trigger escalation check)
+ 353:         /// </summary>
+ 354:         [HttpPost("escalation/check-delays")]
+ 355:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 356:         public async Task<ActionResult> CheckAndEscalateDelayedAssignments()
+ 357:         {
+ 358:             try
+ 359:             {
+ 360:                 await _escalationService.CheckAndEscalateDelayedAssignmentsAsync();
+ 361:                 return Ok(new { message = "Escalation check completed" });
+ 362:             }
+ 363:             catch (Exception ex)
+ 364:             {
+ 365:                 return BadRequest(new { message = ex.Message });
+ 366:             }
+ 367:         }
+ 368: 
+ 369:         /// <summary>
+ 370:         /// Get all active escalations
+ 371:         /// </summary>
+ 372:         [HttpGet("escalations/active")]
+ 373:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER,ADMIN")]
+ 374:         public async Task<ActionResult<List<AssignmentEscalationDto>>> GetActiveEscalations()
+ 375:         {
+ 376:             try
+ 377:             {
+ 378:                 var escalations = await _escalationService.GetActiveEscalationsAsync();
+ 379:                 return Ok(escalations);
+ 380:             }
+ 381:             catch (Exception ex)
+ 382:             {
+ 383:                 return BadRequest(new { message = ex.Message });
+ 384:             }
+ 385:         }
+ 386: 
+ 387:         /// <summary>
+ 388:         /// Get escalations for a specific reviewer
+ 389:         /// </summary>
+ 390:         [HttpGet("escalations/reviewer/{reviewerId}")]
+ 391:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER,ADMIN")]
+ 392:         public async Task<ActionResult<List<AssignmentEscalationDto>>> GetReviewerEscalations(Guid reviewerId)
+ 393:         {
+ 394:             try
+ 395:             {
+ 396:                 var escalations = await _escalationService.GetEscalationsForReviewerAsync(reviewerId);
+ 397:                 return Ok(escalations);
+ 398:             }
+ 399:             catch (Exception ex)
+ 400:             {
+ 401:                 return BadRequest(new { message = ex.Message });
+ 402:             }
+ 403:         }
+ 404: 
+ 405:         /// <summary>
+ 406:         /// Resolve an escalation
+ 407:         /// </summary>
+ 408:         [HttpPut("escalations/{escalationId}/resolve")]
+ 409:         [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+ 410:         public async Task<ActionResult> ResolveEscalation(Guid escalationId, [FromBody] ResolveEscalationRequest request)
+ 411:         {
+ 412:             try
+ 413:             {
+ 414:                 var userId = GetCurrentUserId();
+ 415:                 var result = await _escalationService.ResolveEscalationAsync(escalationId, request.ResolutionComments, userId);
+ 416:                 if (!result)
+ 417:                     return NotFound(new { message = "Escalation not found" });
+ 418: 
+ 419:                 return Ok(new { message = "Escalation resolved successfully" });
+ 420:             }
+ 421:             catch (Exception ex)
+ 422:             {
+ 423:                 return BadRequest(new { message = ex.Message });
+ 424:             }
+ 425:         }
+ 426: 
+ 427:         #endregion
+ 428: 
+ 429:         #region Reassignment Management
+ 430: 
+ 431:         /// <summary>
+ 432:         /// Get all assignments for a specific reviewer
+ 433:         /// </summary>
+ 434:         [HttpGet("reviewer/{reviewerId}/assignments")]
+ 435:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
+ 436:         public async Task<ActionResult<List<ApplicationAssignmentDto>>> GetReviewerAssignments(Guid reviewerId)
+ 437:         {
+ 438:             try
+ 439:             {
+ 440:                 var assignments = await _escalationService.GetAssignmentsForReviewerAsync(reviewerId);
+ 441:                 var dto = assignments.Select(a => new ApplicationAssignmentDto
+ 442:                 {
+ 443:                     Id = a.Id,
+ 444:                     ApplicationId = a.ApplicationId,
+ 445:                     ApplicationNumber = a.Application?.ApplicationNumber ?? string.Empty,
+ 446:                     ReviewerId = a.ReviewerId,
+ 447:                     ReviewerName = a.Reviewer != null ? $"{a.Reviewer.FirstName} {a.Reviewer.LastName}" : "Unknown",
+ 448:                     ReviewerEmail = a.Reviewer?.Email ?? string.Empty,
+ 449:                     AssignedAt = a.AssignedAt,
+ 450:                     IsActive = a.IsActive,
+ 451:                     ReassignmentReason = a.ReassignmentReason,
+ 452:                     AssignedBy = a.AssignedBy
+ 453:                 }).ToList();
+ 454: 
+ 455:                 return Ok(dto);
+ 456:             }
+ 457:             catch (Exception ex)
+ 458:             {
+ 459:                 return BadRequest(new { message = ex.Message });
+ 460:             }
+ 461:         }
+ 462: 
+ 463:         /// <summary>
+ 464:         /// Reassign a single application to a different reviewer
+ 465:         /// </summary>
+ 466:         [HttpPost("assignments/{assignmentId}/reassign")]
+ 467:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
+ 468:         public async Task<ActionResult> ReassignAssignment(Guid assignmentId, [FromBody] ReassignmentRequest request)
+ 469:         {
+ 470:             try
+ 471:             {
+ 472:                 if (request.NewReviewerId == Guid.Empty)
+ 473:                     return BadRequest(new { message = "New reviewer ID is required" });
+ 474: 
+ 475:                 if (string.IsNullOrEmpty(request.Reason))
+ 476:                     return BadRequest(new { message = "Reassignment reason is required" });
+ 477: 
+ 478:                 var result = await _escalationService.ReassignApplicationAsync(assignmentId, request.NewReviewerId, request.Reason);
+ 479: 
+ 480:                 if (!result)
+ 481:                     return BadRequest(new { message = "Failed to reassign assignment. Verify the assignment and reviewer exist." });
+ 482: 
+ 483:                 return Ok(new { message = "Application reassigned successfully" });
+ 484:             }
+ 485:             catch (Exception ex)
+ 486:             {
+ 487:                 return BadRequest(new { message = ex.Message });
+ 488:             }
+ 489:         }
+ 490: 
+ 491:         /// <summary>
+ 492:         /// Reassign multiple applications to a different reviewer (bulk operation)
+ 493:         /// </summary>
+ 494:         [HttpPost("assignments/reassign-bulk")]
+ 495:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
+ 496:         public async Task<ActionResult> ReassignMultipleAssignments([FromBody] BulkReassignmentRequest request)
+ 497:         {
+ 498:             try
+ 499:             {
+ 500:                 if (!request.AssignmentIds.Any())
+ 501:                     return BadRequest(new { message = "At least one assignment ID is required" });
+ 502: 
+ 503:                 if (request.NewReviewerId == Guid.Empty)
+ 504:                     return BadRequest(new { message = "New reviewer ID is required" });
+ 505: 
+ 506:                 if (string.IsNullOrEmpty(request.Reason))
+ 507:                     return BadRequest(new { message = "Reassignment reason is required" });
+ 508: 
+ 509:                 var result = await _escalationService.ReassignMultipleApplicationsAsync(request.AssignmentIds, request.NewReviewerId, request.Reason);
+ 510: 
+ 511:                 if (!result)
+ 512:                     return BadRequest(new { message = "Failed to reassign applications. Verify the assignments and reviewer exist." });
+ 513: 
+ 514:                 return Ok(new 
+ 515:                 { 
+ 516:                     message = $"Successfully reassigned {request.AssignmentIds.Count} application(s) to the new reviewer",
+ 517:                     reassignedCount = request.AssignmentIds.Count
+ 518:                 });
+ 519:             }
+ 520:             catch (Exception ex)
+ 521:             {
+ 522:                 return BadRequest(new { message = ex.Message });
+ 523:             }
+ 524:         }
+ 525: 
+ 526:         /// <summary>
+ 527:         /// Get all applications with their current assignment details (for bulk reassignment)
+ 528:         /// Lead Reviewers use this to see what Admin user has each application and for how long
+ 529:         /// </summary>
+ 530:         [HttpGet("applications/for-bulk-reassignment")]
+ 531:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 532:         public async Task<ActionResult<PaginatedApplicationWithAssignmentDto>> GetApplicationsForBulkReassignment(
+ 533:             [FromQuery] int pageNumber = 1,
+ 534:             [FromQuery] int pageSize = 25,
+ 535:             [FromQuery] string? sortBy = "applicationNumber",
+ 536:             [FromQuery] bool sortDescending = false,
+ 537:             [FromQuery] Guid? reviewerId = null,
+ 538:             [FromQuery] string? applicationStatus = null,
+ 539:             [FromQuery] string? rsaPin = null,
+ 540:             [FromQuery] string? applicationNumber = null,
+ 541:             [FromQuery] DateTime? createdDateFrom = null,
+ 542:             [FromQuery] DateTime? createdDateTo = null,
+ 543:             [FromQuery] DateTime? submittedDateFrom = null,
+ 544:             [FromQuery] DateTime? submittedDateTo = null)
+ 545:         {
+ 546:             try
+ 547:             {
+ 548:                 var result = await _escalationService.GetApplicationsForBulkReassignmentAsync(
+ 549:                     pageNumber,
+ 550:                     pageSize,
+ 551:                     sortBy,
+ 552:                     sortDescending,
+ 553:                     reviewerId,
+ 554:                     applicationStatus,
+ 555:                     rsaPin,
+ 556:                     applicationNumber,
+ 557:                     createdDateFrom,
+ 558:                     createdDateTo,
+ 559:                     submittedDateFrom,
+ 560:                     submittedDateTo);
+ 561:                 return Ok(result);
+ 562:             }
+ 563:             catch (Exception ex)
+ 564:             {
+ 565:                 return BadRequest(new { message = ex.Message });
+ 566:             }
+ 567:         }
+ 568: 
+ 569:         #endregion
+ 570: 
+ 571:         #region Advanced Workload Management
+ 572: 
+ 573:         /// <summary>
+ 574:         /// Get workload balancing suggestions (rebalancing recommendations)
+ 575:         /// </summary>
+ 576:         [HttpGet("workload/suggestions")]
+ 577:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 578:         public async Task<ActionResult> GetWorkloadBalancingSuggestions()
+ 579:         {
+ 580:             try
+ 581:             {
+ 582:                 var suggestions = await _workloadSuggestionService.GetWorkloadBalancingSuggestionsAsync();
+ 583:                 return Ok(suggestions);
+ 584:             }
+ 585:             catch (Exception ex)
+ 586:             {
+ 587:                 return BadRequest(new { message = ex.Message });
+ 588:             }
+ 589:         }
+ 590: 
+ 591:         /// <summary>
+ 592:         /// Get current availability status for a reviewer
+ 593:         /// </summary>
+ 594:         [HttpGet("reviewers/{reviewerId}/availability")]
+ 595:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN,REVIEWER")]
+ 596:         public async Task<ActionResult> GetReviewerAvailability(Guid reviewerId)
+ 597:         {
+ 598:             try
+ 599:             {
+ 600:                 var availability = await _reviewerAvailabilityService.GetReviewerAvailabilityAsync(reviewerId);
+ 601:                 if (availability == null)
+ 602:                     return NotFound(new { message = "Reviewer not found" });
+ 603: 
+ 604:                 return Ok(availability);
+ 605:             }
+ 606:             catch (Exception ex)
+ 607:             {
+ 608:                 return BadRequest(new { message = ex.Message });
+ 609:             }
+ 610:         }
+ 611: 
+ 612:         /// <summary>
+ 613:         /// Mark a reviewer as available for assignments
+ 614:         /// </summary>
+ 615:         [HttpPut("reviewers/{reviewerId}/availability/available")]
+ 616:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 617:         public async Task<ActionResult> MarkReviewerAvailable(Guid reviewerId)
+ 618:         {
+ 619:             try
+ 620:             {
+ 621:                 var userId = GetCurrentUserId();
+ 622:                 var availability = await _reviewerAvailabilityService.MarkAvailableAsync(reviewerId, userId);
+ 623:                 return Ok(new { message = "Reviewer marked as available", availability });
+ 624:             }
+ 625:             catch (Exception ex)
+ 626:             {
+ 627:                 return BadRequest(new { message = ex.Message });
+ 628:             }
+ 629:         }
+ 630: 
+ 631:         /// <summary>
+ 632:         /// Mark a reviewer as unavailable (with optional reason and end date)
+ 633:         /// </summary>
+ 634:         [HttpPut("reviewers/{reviewerId}/availability/unavailable")]
+ 635:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 636:         public async Task<ActionResult> MarkReviewerUnavailable(Guid reviewerId, [FromBody] MarkUnavailableRequest request)
+ 637:         {
+ 638:             try
+ 639:             {
+ 640:                 _logger.LogInformation($"[MARK-UNAVAILABLE-ENDPOINT] Called for ReviewerId={reviewerId}");
+ 641:                 _logger.LogInformation($"[MARK-UNAVAILABLE-ENDPOINT] Request: Reason={request?.Reason}, EndDate={request?.EndDate}");
+ 642: 
+ 643:                 var userId = GetCurrentUserId();
+ 644:                 _logger.LogInformation($"[MARK-UNAVAILABLE-ENDPOINT] Current UserId={userId}");
+ 645: 
+ 646:                 // Default to 7 days from now if no end date provided
+ 647:                 var endDate = request?.EndDate ?? DateTime.UtcNow.AddDays(7);
+ 648: 
+ 649:                 // Validate end date is in the future
+ 650:                 if (endDate <= DateTime.UtcNow)
+ 651:                 {
+ 652:                     _logger.LogWarning($"[MARK-UNAVAILABLE-ENDPOINT] INVALID EndDate: {endDate} is not in the future (NOW={DateTime.UtcNow})");
+ 653:                     return BadRequest(new { message = "End date must be in the future" });
+ 654:                 }
+ 655: 
+ 656:                 var availability = await _reviewerAvailabilityService.MarkUnavailableAsync(
+ 657:                     reviewerId, 
+ 658:                     request?.Reason ?? string.Empty, 
+ 659:                     endDate, 
+ 660:                     userId);
+ 661: 
+ 662:                 _logger.LogInformation($"[MARK-UNAVAILABLE-ENDPOINT] SUCCESS - Returning response with Status={availability.Status}");
+ 663:                 return Ok(new { message = "Reviewer marked as unavailable", availability });
+ 664:             }
+ 665:             catch (Exception ex)
+ 666:             {
+ 667:                 _logger.LogError($"[MARK-UNAVAILABLE-ENDPOINT] ERROR: {ex.Message}");
+ 668:                 _logger.LogError($"[MARK-UNAVAILABLE-ENDPOINT] Exception: {ex}");
+ 669:                 return BadRequest(new { message = ex.Message });
+ 670:             }
+ 671:         }
+ 672: 
+ 673:         /// <summary>
+ 674:         /// Mark a reviewer as on leave with end date
+ 675:         /// </summary>
+ 676:         [HttpPut("reviewers/{reviewerId}/availability/on-leave")]
+ 677:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 678:         public async Task<ActionResult> MarkReviewerOnLeave(Guid reviewerId, [FromBody] MarkOnLeaveRequest request)
+ 679:         {
+ 680:             try
+ 681:             {
+ 682:                 if (request == null || request.EndDate == default)
+ 683:                 {
+ 684:                     _logger.LogWarning($"[MARK-ON-LEAVE-ENDPOINT] EndDate is required for ReviewerId={reviewerId}");
+ 685:                     return BadRequest(new { message = "End date is required" });
+ 686:                 }
+ 687: 
+ 688:                 // Validate end date is in the future
+ 689:                 if (request.EndDate <= DateTime.UtcNow)
+ 690:                 {
+ 691:                     _logger.LogWarning($"[MARK-ON-LEAVE-ENDPOINT] INVALID EndDate: {request.EndDate} is not in the future (NOW={DateTime.UtcNow})");
+ 692:                     return BadRequest(new { message = "End date must be in the future" });
+ 693:                 }
+ 694: 
+ 695:                 var userId = GetCurrentUserId();
+ 696:                 _logger.LogInformation($"[MARK-ON-LEAVE-ENDPOINT] Called for ReviewerId={reviewerId}, EndDate={request.EndDate}, Reason={request.Reason}");
+ 697: 
+ 698:                 var availability = await _reviewerAvailabilityService.MarkOnLeaveAsync(
+ 699:                     reviewerId, 
+ 700:                     request.EndDate, 
+ 701:                     request.Reason, 
+ 702:                     userId);
+ 703: 
+ 704:                 _logger.LogInformation($"[MARK-ON-LEAVE-ENDPOINT] SUCCESS - Reviewer marked on leave");
+ 705:                 return Ok(new { message = "Reviewer marked as on leave", availability });
+ 706:             }
+ 707:             catch (Exception ex)
+ 708:             {
+ 709:                 _logger.LogError($"[MARK-ON-LEAVE-ENDPOINT] ERROR: {ex.Message}");
+ 710:                 return BadRequest(new { message = ex.Message });
+ 711:             }
+ 712:         }
+ 713: 
+ 714:         /// <summary>
+ 715:         /// Get all currently unavailable reviewers with their active assignment counts
+ 716:         /// Returns clean DTO without sensitive data (no password hashes or internal fields)
+ 717:         /// </summary>
+ 718:         [HttpGet("reviewers/availability/unavailable")]
+ 719:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 720:         public async Task<ActionResult> GetUnavailableReviewers()
+ 721:         {
+ 722:             try
+ 723:             {
+ 724:                 _logger.LogInformation("[ANALYTICS-CONTROLLER] GetUnavailableReviewers called");
+ 725: 
+ 726:                 var unavailableReviewers = await _reviewerAvailabilityService.GetUnavailableReviewersAsync();
+ 727: 
+ 728:                 _logger.LogInformation($"[ANALYTICS-CONTROLLER] Service returned {unavailableReviewers.Count} unavailable reviewers");
+ 729: 
+ 730:                 // Map to clean DTO and include active assignment counts
+ 731:                 var responseDto = new List<ReviewerAvailabilityResponseDto>();
+ 732: 
+ 733:                 foreach (var availability in unavailableReviewers)
+ 734:                 {
+ 735:                     _logger.LogInformation($"[ANALYTICS-CONTROLLER] Processing unavailable reviewer: {availability.Reviewer?.FirstName} {availability.Reviewer?.LastName}");
+ 736: 
+ 737:                     // Count active assignments for this reviewer
+ 738:                     var activeAssignmentCount = await _context.ApplicationAssignments
+ 739:                         .Where(a => a.ReviewerId == availability.ReviewerId && a.IsActive)
+ 740:                         .CountAsync();
+ 741: 
+ 742:                     var dto = new ReviewerAvailabilityResponseDto
+ 743:                     {
+ 744:                         Id = availability.Id,
+ 745:                         ReviewerId = availability.ReviewerId,
+ 746:                         FirstName = availability.Reviewer?.FirstName ?? string.Empty,
+ 747:                         LastName = availability.Reviewer?.LastName ?? string.Empty,
+ 748:                         Email = availability.Reviewer?.Email ?? string.Empty,
+ 749:                         Role = availability.Reviewer?.Role ?? string.Empty,
+ 750:                         Status = availability.Status,
+ 751:                         Reason = availability.Reason,
+ 752:                         StatusStartDate = availability.StatusStartDate,
+ 753:                         StatusEndDate = availability.StatusEndDate,
+ 754:                         ActiveAssignmentCount = activeAssignmentCount
+ 755:                     };
+ 756:                     responseDto.Add(dto);
+ 757:                     _logger.LogInformation($"[ANALYTICS-CONTROLLER] Added to response: {dto.FullName}");
+ 758:                 }
+ 759: 
+ 760:                 _logger.LogInformation($"[ANALYTICS-CONTROLLER] Returning {responseDto.Count} DTOs");
+ 761:                 return Ok(responseDto);
+ 762:             }
+ 763:             catch (Exception ex)
+ 764:             {
+ 765:                 _logger.LogError($"[ANALYTICS-CONTROLLER] Error in GetUnavailableReviewers: {ex.Message}");
+ 766:                 return BadRequest(new { message = ex.Message });
+ 767:             }
+ 768:         }
+ 769: 
+ 770:         /// <summary>
+ 771:         /// Get all currently available reviewers with their active assignment counts
+ 772:         /// Returns clean DTO without sensitive data (no password hashes or internal fields)
+ 773:         /// </summary>
+ 774:         [HttpGet("reviewers/availability/available")]
+ 775:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 776:         public async Task<ActionResult> GetAvailableReviewers()
+ 777:         {
+ 778:             try
+ 779:             {
+ 780:                 var availableReviewers = await _reviewerAvailabilityService.GetAvailableReviewersAsync();
+ 781: 
+ 782:                 // Map to clean DTO and include active assignment counts
+ 783:                 var responseDto = new List<ReviewerAvailabilityResponseDto>();
+ 784: 
+ 785:                 foreach (var availability in availableReviewers)
+ 786:                 {
+ 787:                     // Count active assignments for this reviewer
+ 788:                     var activeAssignmentCount = await _context.ApplicationAssignments
+ 789:                         .Where(a => a.ReviewerId == availability.ReviewerId && a.IsActive)
+ 790:                         .CountAsync();
+ 791: 
+ 792:                     responseDto.Add(new ReviewerAvailabilityResponseDto
+ 793:                     {
+ 794:                         Id = availability.Id,
+ 795:                         ReviewerId = availability.ReviewerId,
+ 796:                         FirstName = availability.Reviewer?.FirstName ?? string.Empty,
+ 797:                         LastName = availability.Reviewer?.LastName ?? string.Empty,
+ 798:                         Email = availability.Reviewer?.Email ?? string.Empty,
+ 799:                         Role = availability.Reviewer?.Role ?? string.Empty,
+ 800:                         Status = availability.Status,
+ 801:                         Reason = availability.Reason,
+ 802:                         StatusStartDate = availability.StatusStartDate,
+ 803:                         StatusEndDate = availability.StatusEndDate,
+ 804:                         ActiveAssignmentCount = activeAssignmentCount
+ 805:                     });
+ 806:                 }
+ 807: 
+ 808:                 return Ok(responseDto);
+ 809:             }
+ 810:             catch (Exception ex)
+ 811:             {
+ 812:                 return BadRequest(new { message = ex.Message });
+ 813:             }
+ 814:         }
+ 815: 
+ 816:         /// <summary>
+ 817:         /// Execute reassignments based on predefined criteria (auto-reassignment)
+ 818:         /// </summary>
+ 819:         [HttpPost("applications/reassign-by-criteria")]
+ 820:         [Authorize(Roles = "ADMIN,SUPER_ADMIN")]
+ 821:         public async Task<ActionResult> ReassignByCriteria([FromBody] ReassignmentCriteriaRequest request)
+ 822:         {
+ 823:             try
+ 824:             {
+ 825:                 if (request == null)
+ 826:                     return BadRequest(new { message = "Reassignment criteria is required" });
+ 827: 
+ 828:                 var criteria = new ReassignmentCriteriaDto
+ 829:                 {
+ 830:                     WorkloadThresholdPercentage = request.WorkloadThresholdPercentage,
+ 831:                     ReassignIfUnavailable = request.ReassignIfUnavailable,
+ 832:                     TargetWorkloadMaxPercentage = request.TargetWorkloadMaxPercentage,
+ 833:                     PrioritizeHighPerformers = request.PrioritizeHighPerformers,
+ 834:                     MinimumApprovalRatePercentage = request.MinimumApprovalRatePercentage,
+ 835:                     MaxReassignments = request.MaxReassignments
+ 836:                 };
+ 837: 
+ 838:                 var results = await _criteriaBasedReassignmentService.ExecuteReassignmentsByCriteriaAsync(criteria);
+ 839:                 return Ok(new 
+ 840:                 { 
+ 841:                     message = $"Executed {results.Count} reassignment(s) based on criteria",
+ 842:                     reassignments = results 
+ 843:                 });
+ 844:             }
+ 845:             catch (Exception ex)
+ 846:             {
+ 847:                 return BadRequest(new { message = ex.Message });
+ 848:             }
+ 849:         }
+ 850: 
+ 851:         /// <summary>
+ 852:         /// Auto-balance workload across all reviewers
+ 853:         /// </summary>
+ 854:         [HttpPost("applications/auto-balance-workload")]
+ 855:         [Authorize(Roles = "ADMIN,SUPER_ADMIN")]
+ 856:         public async Task<ActionResult> AutoBalanceWorkload()
+ 857:         {
+ 858:             try
+ 859:             {
+ 860:                 var results = await _criteriaBasedReassignmentService.AutoBalanceWorkloadAsync();
+ 861:                 return Ok(new 
+ 862:                 { 
+ 863:                     message = $"Auto-balanced workload with {results.Count} reassignment(s)",
+ 864:                     reassignments = results 
+ 865:                 });
+ 866:             }
+ 867:             catch (Exception ex)
+ 868:             {
+ 869:                 return BadRequest(new { message = ex.Message });
+ 870:             }
+ 871:         }
+ 872: 
+ 873:         /// <summary>
+ 874:         /// Get reassignment history/audit logs (recent reassignments)
+ 875:         /// </summary>
+ 876:         [HttpGet("reassignments/history")]
+ 877:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 878:         public async Task<ActionResult> GetReassignmentHistory([FromQuery] int days = 30, [FromQuery] int pageSize = 100)
+ 879:         {
+ 880:             try
+ 881:             {
+ 882:                 var history = await _performanceService.GetReassignmentHistoryAsync(days, pageSize);
+ 883:                 return Ok(history);
+ 884:             }
+ 885:             catch (Exception ex)
+ 886:             {
+ 887:                 return BadRequest(new { message = ex.Message });
+ 888:             }
+ 889:         }
+ 890: 
+ 891:         /// <summary>
+ 892:         /// Get reassignment history for a specific reviewer
+ 893:         /// </summary>
+ 894:         [HttpGet("reassignments/history/reviewer/{reviewerId}")]
+ 895:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 896:         public async Task<ActionResult> GetReviewerReassignmentHistory(Guid reviewerId, [FromQuery] int days = 30)
+ 897:         {
+ 898:             try
+ 899:             {
+ 900:                 var history = await _performanceService.GetReassignmentHistoryForReviewerAsync(reviewerId, days);
+ 901:                 return Ok(history);
+ 902:             }
+ 903:             catch (Exception ex)
+ 904:             {
+ 905:                 return BadRequest(new { message = ex.Message });
+ 906:             }
+ 907:         }
+ 908: 
+ 909:         /// <summary>
+ 910:         /// Get reassignment metrics and audit statistics
+ 911:         /// </summary>
+ 912:         [HttpGet("reassignments/metrics")]
+ 913:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 914:         public async Task<ActionResult> GetReassignmentMetrics()
+ 915:         {
+ 916:             try
+ 917:             {
+ 918:                 var metrics = await _performanceService.GetReassignmentMetricsAsync();
+ 919:                 return Ok(metrics);
+ 920:             }
+ 921:             catch (Exception ex)
+ 922:             {
+ 923:                 return BadRequest(new { message = ex.Message });
+ 924:             }
+ 925:         }
+ 926: 
+ 927:         #endregion
+ 928: 
+ 929:         #region Audit & Hours Tracking
+ 930: 
+ 931:         /// <summary>
+ 932:         /// Get hours spent on a specific application by all assigned reviewers.
+ 933:         /// Provides detailed audit trail of time investment per application.
+ 934:         /// </summary>
+ 935:         [HttpGet("applications/{applicationId}/hours-by-reviewer")]
+ 936:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 937:         public async Task<ActionResult<List<ApplicationHoursTrackingDto>>> GetApplicationHoursTracking(Guid applicationId)
+ 938:         {
+ 939:             try
+ 940:             {
+ 941:                 var hoursData = await _performanceService.GetApplicationHoursTrackingAsync(applicationId);
+ 942:                 return Ok(hoursData);
+ 943:             }
+ 944:             catch (Exception ex)
+ 945:             {
+ 946:                 return BadRequest(new { message = ex.Message });
+ 947:             }
+ 948:         }
+ 949: 
+ 950:         /// <summary>
+ 951:         /// Get comprehensive audit summary of hours spent by a reviewer over a date range.
+ 952:         /// Includes per-application breakdown and aggregate statistics for compliance reporting.
+ 953:         /// </summary>
+ 954:         [HttpGet("audit/reviewer/{reviewerId}/hours-summary")]
+ 955:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN")]
+ 956:         public async Task<ActionResult<ReviewerHoursAuditSummaryDto>> GetReviewerHoursAuditSummary(
+ 957:             Guid reviewerId,
+ 958:             [FromQuery] DateTime? dateFrom = null,
+ 959:             [FromQuery] DateTime? dateTo = null)
+ 960:         {
+ 961:             try
+ 962:             {
+ 963:                 var auditSummary = await _performanceService.GetReviewerHoursAuditSummaryAsync(reviewerId, dateFrom, dateTo);
+ 964:                 return Ok(auditSummary);
+ 965:             }
+ 966:             catch (Exception ex)
+ 967:             {
+ 968:                 return BadRequest(new { message = ex.Message });
+ 969:             }
+ 970:         }
+ 971: 
+ 972:         /// <summary>
+ 973:         /// Get summary of hours spent by a reviewer (without application details).
+ 974:         /// Quick endpoint for dashboard display of total hours and statistics.
+ 975:         /// </summary>
+ 976:         [HttpGet("reviewer/{reviewerId}/hours-summary")]
+ 977:         [Authorize(Roles = "LEAD_REVIEWER,SUPER_ADMIN,ADMIN")]
+ 978:         public async Task<ActionResult<object>> GetReviewerHoursSummary(
+ 979:             Guid reviewerId,
+ 980:             [FromQuery] DateTime? dateFrom = null,
+ 981:             [FromQuery] DateTime? dateTo = null)
+ 982:         {
+ 983:             try
+ 984:             {
+ 985:                 var auditSummary = await _performanceService.GetReviewerHoursAuditSummaryAsync(reviewerId, dateFrom, dateTo);
+ 986: 
+ 987:                 // Return summary without detailed application list for dashboard use
+ 988:                 return Ok(new
+ 989:                 {
+ 990:                     reviewerId = auditSummary.ReviewerId,
+ 991:                     reviewerName = auditSummary.ReviewerName,
+ 992:                     reviewerEmail = auditSummary.ReviewerEmail,
+ 993:                     dateFrom = auditSummary.DateFrom,
+ 994:                     dateTo = auditSummary.DateTo,
+ 995:                     totalHoursSpent = Math.Round(auditSummary.TotalHoursSpent, 2),
+ 996:                     totalApplicationsProcessed = auditSummary.TotalApplicationsProcessed,
+ 997:                     totalDocumentsReviewed = auditSummary.TotalDocumentsReviewed,
+ 998:                     averageHoursPerApplication = Math.Round(auditSummary.AverageHoursPerApplication, 2),
+ 999:                     averageHoursPerDocument = auditSummary.TotalDocumentsReviewed > 0 
+1000:                         ? Math.Round(auditSummary.TotalHoursSpent / auditSummary.TotalDocumentsReviewed, 2)
+1001:                         : 0
+1002:                 });
+1003:             }
+1004:             catch (Exception ex)
+1005:             {
+1006:                 return BadRequest(new { message = ex.Message });
+1007:             }
+1008:         }
+1009: 
+1010:         #endregion
+1011: 
+1012:         private Guid GetCurrentUserId()
+1013:         {
+1014:             var userIdClaim = User.FindFirst("UserId");
+1015:             if (userIdClaim == null || !Guid.TryParse(userIdClaim.Value, out var userId))
+1016:             {
+1017:                 throw new Exception("Invalid user token");
+1018:             }
+1019:             return userId;
+1020:         }
+1021:     }
+1022: 
+1023:     public class ResolveEscalationRequest
+1024:     {
+1025:         public string ResolutionComments { get; set; } = string.Empty;
+1026:     }
+1027: 
+1028:     public class ReassignmentRequest
+1029:     {
+1030:         public Guid NewReviewerId { get; set; }
+1031:         public string Reason { get; set; } = string.Empty;
+1032:     }
+1033: 
+1034:     public class BulkReassignmentRequest
+1035:     {
+1036:         public List<Guid> AssignmentIds { get; set; } = new();
+1037:         public Guid NewReviewerId { get; set; }
+1038:         public string Reason { get; set; } = string.Empty;
+1039:     }
+1040: }
+
+===== AnalyticsService.cs : NOT FOUND =====
+
+===== IAnalyticsService.cs : NOT FOUND =====
+
+===== \Services\ReviewerPerformanceService.cs =====
+   1: using Microsoft.EntityFrameworkCore;
+   2: using Microsoft.Extensions.Caching.Memory;
+   3: using MMGT.API.Data;
+   4: using MMGT.API.Models;
+   5: using MMGT.API.DTOs.Performance;
+   6: 
+   7: namespace MMGT.API.Services
+   8: {
+   9:     public interface IReviewerPerformanceService
+  10:     {
+  11:         Task<ReviewerPerformanceMetricsDto> GetReviewerMetricsAsync(Guid reviewerId);
+  12:         Task<List<ReviewerPerformanceMetricsDto>> GetAllReviewersMetricsAsync();
+  13:         Task RecalculateMetricsAsync(Guid reviewerId);
+  14:         Task RecalculateAllMetricsAsync();
+  15:         Task<double> GetAverageTurnaroundTimeAsync(Guid reviewerId, int days = 30);
+  16:         Task<List<ReviewerPerformanceMetricsDto>> GetTopPerformersAsync(int count = 5);
+  17:         Task<List<ReviewerPerformanceMetricsDto>> GetBottomPerformersAsync(int count = 5);
+  18:         Task<WorkloadDistributionSummaryDto> GetWorkloadDistributionAsync();
+  19:         Task<PaginatedWorkloadDistributionDto> GetWorkloadDistributionPagedAsync(
+  20:             int pageNumber = 1,
+  21:             int pageSize = 25,
+  22:             string sortBy = "ReviewerName",
+  23:             bool sortDescending = false);
+  24:         Task<List<ReassignmentHistoryDto>> GetReassignmentHistoryAsync(int days = 30, int pageSize = 100);
+  25:         Task<List<ReassignmentHistoryDto>> GetReassignmentHistoryForReviewerAsync(Guid reviewerId, int days = 30);
+  26:         Task<ReassignmentAuditMetricsDto> GetReassignmentMetricsAsync();
+  27:         Task<List<ApplicationHoursTrackingDto>> GetApplicationHoursTrackingAsync(Guid applicationId);
+  28:         Task<ReviewerHoursAuditSummaryDto> GetReviewerHoursAuditSummaryAsync(Guid reviewerId, DateTime? dateFrom = null, DateTime? dateTo = null);
+  29:     }
+  30: 
+  31:     public class ReviewerPerformanceService : IReviewerPerformanceService
+  32:     {
+  33:         private readonly ApplicationDbContext _context;
+  34:         private readonly ILogger<ReviewerPerformanceService> _logger;
+  35:         private readonly IMemoryCache _memoryCache;
+  36: 
+  37:         // Cache keys
+  38:         private const string ALL_METRICS_CACHE_KEY = "performance_all_reviewers_metrics";
+  39:         private const string TOP_PERFORMERS_CACHE_KEY_PREFIX = "performance_top_performers_";
+  40:         private const string BOTTOM_PERFORMERS_CACHE_KEY_PREFIX = "performance_bottom_performers_";
+  41:         private const string WORKLOAD_DISTRIBUTION_CACHE_KEY = "performance_workload_distribution";
+  42:         private const int CACHE_DURATION_MINUTES = 5;
+  43: 
+  44:         public ReviewerPerformanceService(
+  45:             ApplicationDbContext context,
+  46:             ILogger<ReviewerPerformanceService> logger,
+  47:             IMemoryCache memoryCache)
+  48:         {
+  49:             _context = context;
+  50:             _logger = logger;
+  51:             _memoryCache = memoryCache;
+  52:         }
+  53: 
+  54:         /// <summary>
+  55:         /// Get performance metrics for a specific reviewer
+  56:         /// </summary>
+  57:         public async Task<ReviewerPerformanceMetricsDto> GetReviewerMetricsAsync(Guid reviewerId)
+  58:         {
+  59:             var metrics = await _context.ReviewerPerformanceMetrics
+  60:                 .AsNoTracking()
+  61:                 .Include(m => m.Reviewer)
+  62:                 .FirstOrDefaultAsync(m => m.ReviewerId == reviewerId);
+  63: 
+  64:             if (metrics == null)
+  65:             {
+  66:                 // If metrics don't exist, calculate them
+  67:                 await RecalculateMetricsAsync(reviewerId);
+  68:                 metrics = await _context.ReviewerPerformanceMetrics
+  69:                     .Include(m => m.Reviewer)
+  70:                     .FirstOrDefaultAsync(m => m.ReviewerId == reviewerId);
+  71:             }
+  72: 
+  73:             return metrics == null ? new ReviewerPerformanceMetricsDto() : MapToDto(metrics);
+  74:         }
+  75: 
+  76:         /// <summary>
+  77:         /// Get performance metrics for all reviewers
+  78:         /// </summary>
+  79:         public async Task<List<ReviewerPerformanceMetricsDto>> GetAllReviewersMetricsAsync()
+  80:         {
+  81:             if (_memoryCache.TryGetValue(ALL_METRICS_CACHE_KEY, out List<ReviewerPerformanceMetricsDto> cachedMetrics))
+  82:             {
+  83:                 return cachedMetrics;
+  84:             }
+  85: 
+  86:             var metrics = await _context.ReviewerPerformanceMetrics
+  87:                 .AsNoTracking()
+  88:                 .Include(m => m.Reviewer)
+  89:                 .Where(m => m.Reviewer != null && m.Reviewer.IsActive)
+  90:                 .OrderByDescending(m => m.ApprovalRatePercentage)
+  91:                 .ToListAsync();
+  92: 
+  93:             var result = metrics.Select(MapToDto).ToList();
+  94: 
+  95:             var cacheOptions = new MemoryCacheEntryOptions()
+  96:                 .SetSize(result.Count)
+  97:                 .SetAbsoluteExpiration(TimeSpan.FromMinutes(CACHE_DURATION_MINUTES));
+  98:             _memoryCache.Set(ALL_METRICS_CACHE_KEY, result, cacheOptions);
+  99: 
+ 100:             return result;
+ 101:         }
+ 102: 
+ 103:         /// <summary>
+ 104:         /// Recalculate performance metrics for a specific reviewer
+ 105:         /// </summary>
+ 106:         public async Task RecalculateMetricsAsync(Guid reviewerId)
+ 107:         {
+ 108:             try
+ 109:             {
+ 110:                 var reviewer = await _context.Users.FindAsync(reviewerId);
+ 111:                 if (reviewer == null)
+ 112:                 {
+ 113:                     _logger.LogWarning($"Reviewer {reviewerId} not found for metrics calculation");
+ 114:                     return;
+ 115:                 }
+ 116: 
+ 117:                 // Get all assignments for this reviewer
+ 118:                 var assignments = await _context.ApplicationAssignments
+ 119:                     .Where(a => a.ReviewerId == reviewerId)
+ 120:                     .Include(a => a.Application)
+ 121:                     .ToListAsync();
+ 122: 
+ 123:                 var activeAssignments = assignments.Where(a => a.IsActive).Count();
+ 124:                 var totalAssignments = assignments.Count;
+ 125: 
+ 126:                 // Calculate completed assignments with turnaround time
+ 127:                 var completedAssignments = new List<ApplicationAssignment>();
+ 128:                 var totalHours = 0.0;
+ 129: 
+ 130:                 foreach (var assignment in assignments.Where(a => !a.IsActive))
+ 131:                 {
+ 132:                     if (assignment.Application != null && assignment.Application.CompletedAt.HasValue)
+ 133:                     {
+ 134:                         completedAssignments.Add(assignment);
+ 135:                         var hours = (assignment.Application.CompletedAt.Value - assignment.AssignedAt).TotalHours;
+ 136:                         totalHours += hours;
+ 137:                     }
+ 138:                 }
+ 139: 
+ 140:                 var avgTurnaroundHours = completedAssignments.Any() 
+ 141:                     ? totalHours / completedAssignments.Count 
+ 142:                     : 0.0;
+ 143: 
+ 144:                 // Get document review statistics
+ 145:                 var reviewedDocuments = await _context.ApplicationDocuments
+ 146:                     .Where(d => d.ReviewedBy == reviewerId)
+ 147:                     .ToListAsync();
+ 148: 
+ 149:                 var approved = reviewedDocuments.Count(d => d.ReviewStatus == "approved");
+ 150:                 var rejected = reviewedDocuments.Count(d => d.ReviewStatus == "rejected");
+ 151:                 var revisionRequested = reviewedDocuments.Count(d => d.ReviewStatus == "revision_requested");
+ 152: 
+ 153:                 var totalReviewed = approved + rejected + revisionRequested;
+ 154:                 var approvalRate = totalReviewed > 0 ? (approved * 100.0 / totalReviewed) : 0.0;
+ 155:                 var rejectionRate = totalReviewed > 0 ? (rejected * 100.0 / totalReviewed) : 0.0;
+ 156:                 var revisionRate = totalReviewed > 0 ? (revisionRequested * 100.0 / totalReviewed) : 0.0;
+ 157: 
+ 158:                 // Count escalations
+ 159:                 var escalations = await _context.AssignmentEscalations
+ 160:                     .Where(e => e.ApplicationAssignment!.ReviewerId == reviewerId)
+ 161:                     .ToListAsync();
+ 162: 
+ 163:                 var activeEscalations = escalations.Count(e => e.Status != "resolved");
+ 164:                 var totalEscalations = escalations.Count;
+ 165: 
+ 166:                 // Determine performance rating
+ 167:                 var performanceRating = DeterminePerformanceRating(approvalRate, avgTurnaroundHours);
+ 168: 
+ 169:                 // Get or create metrics record
+ 170:                 var metrics = await _context.ReviewerPerformanceMetrics
+ 171:                     .FirstOrDefaultAsync(m => m.ReviewerId == reviewerId);
+ 172: 
+ 173:                 if (metrics == null)
+ 174:                 {
+ 175:                     metrics = new ReviewerPerformanceMetrics
+ 176:                     {
+ 177:                         ReviewerId = reviewerId
+ 178:                     };
+ 179:                     _context.ReviewerPerformanceMetrics.Add(metrics);
+ 180:                 }
+ 181: 
+ 182:                 // Update metrics
+ 183:                 metrics.TotalAssignments = totalAssignments;
+ 184:                 metrics.ActiveAssignments = activeAssignments;
+ 185:                 metrics.CompletedAssignments = completedAssignments.Count;
+ 186:                 metrics.DocumentsApproved = approved;
+ 187:                 metrics.DocumentsRejected = rejected;
+ 188:                 metrics.DocumentsRevisionRequested = revisionRequested;
+ 189:                 metrics.AverageTurnaroundTimeHours = avgTurnaroundHours;
+ 190:                 metrics.ApprovalRatePercentage = approvalRate;
+ 191:                 metrics.RejectionRatePercentage = rejectionRate;
+ 192:                 metrics.RevisionRequestRatePercentage = revisionRate;
+ 193:                 metrics.EscalatedAssignments = activeEscalations;
+ 194:                 metrics.TotalEscalationCount = totalEscalations;
+ 195:                 metrics.LastCalculatedAt = DateTime.UtcNow;
+ 196:                 metrics.PerformanceRating = performanceRating;
+ 197:                 metrics.TotalHoursSpent = totalHours;
+ 198:                 metrics.AverageHoursPerAssignment = completedAssignments.Any() 
+ 199:                     ? totalHours / completedAssignments.Count 
+ 200:                     : 0.0;
+ 201: 
+ 202:                 await _context.SaveChangesAsync();
+ 203: 
+ 204:                 // Invalidate relevant caches after recalculation
+ 205:                 InvalidatePerformanceCache();
+ 206: 
+ 207:                 _logger.LogInformation($"Metrics calculated for reviewer {reviewerId}");
+ 208:             }
+ 209:             catch (Exception ex)
+ 210:             {
+ 211:                 _logger.LogError($"Error calculating metrics for reviewer {reviewerId}: {ex.Message}");
+ 212:             }
+ 213:         }
+ 214: 
+ 215:         /// <summary>
+ 216:         /// Recalculate metrics for all reviewers
+ 217:         /// </summary>
+ 218:         public async Task RecalculateAllMetricsAsync()
+ 219:         {
+ 220:             try
+ 221:             {
+ 222:                 var reviewers = await _context.Users
+ 223:                     .Where(u => u.IsActive && (u.Role == "ADMIN" || u.Role == "LEAD_REVIEWER"))
+ 224:                     .Select(u => u.Id)
+ 225:                     .ToListAsync();
+ 226: 
+ 227:                 foreach (var reviewerId in reviewers)
+ 228:                 {
+ 229:                     await RecalculateMetricsAsync(reviewerId);
+ 230:                 }
+ 231: 
+ 232:                 // Invalidate all caches after recalculation
+ 233:                 InvalidatePerformanceCache();
+ 234: 
+ 235:                 _logger.LogInformation($"Recalculated metrics for {reviewers.Count} reviewers");
+ 236:             }
+ 237:             catch (Exception ex)
+ 238:             {
+ 239:                 _logger.LogError($"Error recalculating all metrics: {ex.Message}");
+ 240:             }
+ 241:         }
+ 242: 
+ 243:         /// <summary>
+ 244:         /// Get average turnaround time for a reviewer over the last N days
+ 245:         /// </summary>
+ 246:         public async Task<double> GetAverageTurnaroundTimeAsync(Guid reviewerId, int days = 30)
+ 247:         {
+ 248:             var startDate = DateTime.UtcNow.AddDays(-days);
+ 249: 
+ 250:             var completedAssignments = await _context.ApplicationAssignments
+ 251:                 .Where(a => a.ReviewerId == reviewerId && 
+ 252:                        !a.IsActive &&
+ 253:                        a.Application != null &&
+ 254:                        a.Application.CompletedAt.HasValue &&
+ 255:                        a.Application.CompletedAt >= startDate)
+ 256:                 .Include(a => a.Application)
+ 257:                 .ToListAsync();
+ 258: 
+ 259:             if (!completedAssignments.Any())
+ 260:                 return 0.0;
+ 261: 
+ 262:             var totalHours = completedAssignments.Sum(a => (a.Application!.CompletedAt!.Value - a.AssignedAt).TotalHours);
+ 263:             return totalHours / completedAssignments.Count;
+ 264:         }
+ 265: 
+ 266:         /// <summary>
+ 267:         /// Get top performing reviewers
+ 268:         /// </summary>
+ 269:         public async Task<List<ReviewerPerformanceMetricsDto>> GetTopPerformersAsync(int count = 5)
+ 270:         {
+ 271:             var cacheKey = TOP_PERFORMERS_CACHE_KEY_PREFIX + count;
+ 272:             if (_memoryCache.TryGetValue(cacheKey, out List<ReviewerPerformanceMetricsDto> cachedMetrics))
+ 273:             {
+ 274:                 return cachedMetrics;
+ 275:             }
+ 276: 
+ 277:             var metrics = await _context.ReviewerPerformanceMetrics
+ 278:                 .AsNoTracking()
+ 279:                 .Include(m => m.Reviewer)
+ 280:                 .Where(m => m.Reviewer != null && m.Reviewer.IsActive && m.CompletedAssignments > 0)
+ 281:                 .OrderByDescending(m => m.ApprovalRatePercentage)
+ 282:                 .ThenBy(m => m.AverageTurnaroundTimeHours)
+ 283:                 .Take(count)
+ 284:                 .ToListAsync();
+ 285: 
+ 286:             var result = metrics.Select(MapToDto).ToList();
+ 287: 
+ 288:             var cacheOptions = new MemoryCacheEntryOptions()
+ 289:                 .SetSize(result.Count)
+ 290:                 .SetAbsoluteExpiration(TimeSpan.FromMinutes(CACHE_DURATION_MINUTES));
+ 291:             _memoryCache.Set(cacheKey, result, cacheOptions);
+ 292: 
+ 293:             return result;
+ 294:         }
+ 295: 
+ 296:         /// <summary>
+ 297:         /// Get bottom performing reviewers
+ 298:         /// </summary>
+ 299:         public async Task<List<ReviewerPerformanceMetricsDto>> GetBottomPerformersAsync(int count = 5)
+ 300:         {
+ 301:             var cacheKey = BOTTOM_PERFORMERS_CACHE_KEY_PREFIX + count;
+ 302:             if (_memoryCache.TryGetValue(cacheKey, out List<ReviewerPerformanceMetricsDto> cachedMetrics))
+ 303:             {
+ 304:                 return cachedMetrics;
+ 305:             }
+ 306: 
+ 307:             var metrics = await _context.ReviewerPerformanceMetrics
+ 308:                 .AsNoTracking()
+ 309:                 .Include(m => m.Reviewer)
+ 310:                 .Where(m => m.Reviewer != null && m.Reviewer.IsActive && m.CompletedAssignments > 0)
+ 311:                 .OrderBy(m => m.ApprovalRatePercentage)
+ 312:                 .ThenByDescending(m => m.AverageTurnaroundTimeHours)
+ 313:                 .Take(count)
+ 314:                 .ToListAsync();
+ 315: 
+ 316:             var result = metrics.Select(MapToDto).ToList();
+ 317: 
+ 318:             var cacheOptions = new MemoryCacheEntryOptions()
+ 319:                 .SetSize(result.Count)
+ 320:                 .SetAbsoluteExpiration(TimeSpan.FromMinutes(CACHE_DURATION_MINUTES));
+ 321:             _memoryCache.Set(cacheKey, result, cacheOptions);
+ 322: 
+ 323:             return result;
+ 324:         }
+ 325: 
+ 326:         private void InvalidatePerformanceCache()
+ 327:         {
+ 328:             _memoryCache.Remove(ALL_METRICS_CACHE_KEY);
+ 329:             _memoryCache.Remove(WORKLOAD_DISTRIBUTION_CACHE_KEY);
+ 330: 
+ 331:             // Remove top/bottom performers cache for common count values
+ 332:             for (int i = 1; i <= 10; i++)
+ 333:             {
+ 334:                 _memoryCache.Remove(TOP_PERFORMERS_CACHE_KEY_PREFIX + i);
+ 335:                 _memoryCache.Remove(BOTTOM_PERFORMERS_CACHE_KEY_PREFIX + i);
+ 336:             }
+ 337:         }
+ 338: 
+ 339:         private string DeterminePerformanceRating(double approvalRate, double avgTurnaroundHours)
+ 340:         {
+ 341:             // Rating based on approval rate and turnaround time
+ 342:             if (approvalRate >= 90 && avgTurnaroundHours <= 24)
+ 343:                 return "Excellent";
+ 344:             else if (approvalRate >= 75 && avgTurnaroundHours <= 48)
+ 345:                 return "Good";
+ 346:             else if (approvalRate >= 50 && avgTurnaroundHours <= 72)
+ 347:                 return "Average";
+ 348:             else
+ 349:                 return "Poor";
+ 350:         }
+ 351: 
+ 352:         /// <summary>
+ 353:         /// Get workload distribution across all reviewers
+ 354:         /// </summary>
+ 355:         public async Task<WorkloadDistributionSummaryDto> GetWorkloadDistributionAsync()
+ 356:         {
+ 357:             if (_memoryCache.TryGetValue(WORKLOAD_DISTRIBUTION_CACHE_KEY, out WorkloadDistributionSummaryDto cachedResult))
+ 358:             {
+ 359:                 return cachedResult;
+ 360:             }
+ 361: 
+ 362:             var metrics = await _context.ReviewerPerformanceMetrics
+ 363:                 .AsNoTracking()
+ 364:                 .Include(m => m.Reviewer)
+ 365:                 .Where(m => m.Reviewer!.IsActive)
+ 366:                 .OrderBy(m => m.Reviewer!.FirstName)
+ 367:                 .ToListAsync();
+ 368: 
+ 369:             if (!metrics.Any())
+ 370:             {
+ 371:                 var emptyResult = new WorkloadDistributionSummaryDto
+ 372:                 {
+ 373:                     TotalReviewers = 0,
+ 374:                     TotalAssignments = 0,
+ 375:                     AverageAssignmentsPerReviewer = 0,
+ 376:                     MaxAssignments = 0,
+ 377:                     MinAssignments = 0,
+ 378:                     OverallApprovalRate = 0,
+ 379:                     ReviewerWorkloads = new List<WorkloadDistributionDto>()
+ 380:                 };
+ 381: 
+ 382:                 var cacheOptions = new MemoryCacheEntryOptions()
+ 383:                     .SetSize(1)
+ 384:                     .SetAbsoluteExpiration(TimeSpan.FromMinutes(CACHE_DURATION_MINUTES));
+ 385:                 _memoryCache.Set(WORKLOAD_DISTRIBUTION_CACHE_KEY, emptyResult, cacheOptions);
+ 386: 
+ 387:                 return emptyResult;
+ 388:             }
+ 389: 
+ 390:             var workloads = await MapToWorkloadDtosAsync(metrics);
+ 391:             var totalAssignments = workloads.Sum(w => w.TotalAssignments);
+ 392:             var totalApprovalRate = workloads.Any() ? workloads.Average(w => w.ApprovalRatePercentage) : 0;
+ 393:             var totalHours = workloads.Sum(w => w.TotalHoursSpent);
+ 394:             var avgEscalationRate = workloads.Any() ? workloads.Average(w => w.EscalationRatePercentage) : 0;
+ 395:             var avgTurnaroundTime = workloads.Any() ? workloads.Average(w => w.AverageTurnaroundTimeHours) : 0;
+ 396: 
+ 397:             // Determine overall team health
+ 398:             var overallHealth = totalApprovalRate >= 85 && avgEscalationRate < 10 ? "Excellent" :
+ 399:                                totalApprovalRate >= 75 && avgEscalationRate < 15 ? "Good" :
+ 400:                                totalApprovalRate >= 60 && avgEscalationRate < 20 ? "Fair" : "Poor";
+ 401: 
+ 402:             var reviewersAtRisk = workloads.Count(w => w.BurnoutRisk == "High");
+ 403:             var reviewersOverCapacity = workloads.Count(w => w.CapacityUtilizationPercentage > 100);
+ 404: 
+ 405:             var result = new WorkloadDistributionSummaryDto
+ 406:             {
+ 407:                 TotalReviewers = workloads.Count,
+ 408:                 TotalAssignments = totalAssignments,
+ 409:                 AverageAssignmentsPerReviewer = workloads.Any() ? totalAssignments / workloads.Count : 0,
+ 410:                 MaxAssignments = workloads.Any() ? workloads.Max(w => w.TotalAssignments) : 0,
+ 411:                 MinAssignments = workloads.Any() ? workloads.Min(w => w.TotalAssignments) : 0,
+ 412:                 OverallApprovalRate = Math.Round(totalApprovalRate, 2),
+ 413:                 AverageEscalationRate = Math.Round(avgEscalationRate, 2),
+ 414:                 TeamAverageTurnaroundTime = Math.Round(avgTurnaroundTime, 2),
+ 415:                 OverallTeamHealth = overallHealth,
+ 416:                 TotalTeamHoursSpent = Math.Round(totalHours, 2),
+ 417:                 AverageHoursPerReviewer = Math.Round(totalHours / Math.Max(1, workloads.Count), 2),
+ 418:                 TeamCapacityUtilization = Math.Round((totalHours / (160 * workloads.Count)) * 100, 2),
+ 419:                 ReviewersAtRisk = reviewersAtRisk,
+ 420:                 ReviewersOverCapacity = reviewersOverCapacity,
+ 421:                 TeamWeeklyVelocity = Math.Round(workloads.Average(w => w.WeeklyWorkloadAverage), 2),
+ 422:                 TeamWorkloadTrend = DetermineTeamTrend(workloads),
+ 423:                 VelocityChangePercentage = Math.Round(workloads.Average(w => w.VelocityChangePercentage), 2),
+ 424:                 HighRiskReviewers = reviewersAtRisk,
+ 425:                 ReviewerWorkloads = workloads
+ 426:             };
+ 427: 
+ 428:             var cacheOpts = new MemoryCacheEntryOptions()
+ 429:                 .SetSize(workloads.Count)
+ 430:                 .SetAbsoluteExpiration(TimeSpan.FromMinutes(CACHE_DURATION_MINUTES));
+ 431:             _memoryCache.Set(WORKLOAD_DISTRIBUTION_CACHE_KEY, result, cacheOpts);
+ 432: 
+ 433:             return result;
+ 434:         }
+ 435: 
+ 436:         /// <summary>
+ 437:         /// Get workload distribution with pagination and sorting
+ 438:         /// </summary>
+ 439:         public async Task<PaginatedWorkloadDistributionDto> GetWorkloadDistributionPagedAsync(
+ 440:             int pageNumber = 1,
+ 441:             int pageSize = 25,
+ 442:             string sortBy = "ReviewerName",
+ 443:             bool sortDescending = false)
+ 444:         {
+ 445:             pageNumber = Math.Max(1, pageNumber);
+ 446:             pageSize = Math.Max(1, Math.Min(pageSize, 100)); // Cap at 100
+ 447: 
+ 448:             var metricsQuery = _context.ReviewerPerformanceMetrics
+ 449:                 .AsNoTracking()
+ 450:                 .Include(m => m.Reviewer)
+ 451:                 .Where(m => m.Reviewer != null && m.Reviewer.IsActive && m.ActiveAssignments > 0);
+ 452: 
+ 453:             // Load all metrics once
+ 454:             var allMetrics = await metricsQuery.ToListAsync();
+ 455: 
+ 456:             // Apply sorting in memory
+ 457:             var sortedMetrics = sortBy.ToLower() switch
+ 458:             {
+ 459:                 "reviewername" => sortDescending
+ 460:                     ? allMetrics.OrderByDescending(m => m.Reviewer!.FirstName).ThenByDescending(m => m.Reviewer!.LastName).ToList()
+ 461:                     : allMetrics.OrderBy(m => m.Reviewer!.FirstName).ThenBy(m => m.Reviewer!.LastName).ToList(),
+ 462: 
+ 463:                 "workload" or "totalassignments" => sortDescending
+ 464:                     ? allMetrics.OrderByDescending(m => m.TotalAssignments).ToList()
+ 465:                     : allMetrics.OrderBy(m => m.TotalAssignments).ToList(),
+ 466: 
+ 467:                 "activeassignments" => sortDescending
+ 468:                     ? allMetrics.OrderByDescending(m => m.ActiveAssignments).ToList()
+ 469:                     : allMetrics.OrderBy(m => m.ActiveAssignments).ToList(),
+ 470: 
+ 471:                 "approvalrate" => sortDescending
+ 472:                     ? allMetrics.OrderByDescending(m => m.ApprovalRatePercentage).ToList()
+ 473:                     : allMetrics.OrderBy(m => m.ApprovalRatePercentage).ToList(),
+ 474: 
+ 475:                 "turnaroundtime" => sortDescending
+ 476:                     ? allMetrics.OrderByDescending(m => m.AverageTurnaroundTimeHours).ToList()
+ 477:                     : allMetrics.OrderBy(m => m.AverageTurnaroundTimeHours).ToList(),
+ 478: 
+ 479:                 "performancerating" => sortDescending
+ 480:                     ? allMetrics.OrderByDescending(m => m.PerformanceRating).ToList()
+ 481:                     : allMetrics.OrderBy(m => m.PerformanceRating).ToList(),
+ 482: 
+ 483:                 "hours" or "totalhoursspent" => sortDescending
+ 484:                     ? allMetrics.OrderByDescending(m => m.TotalHoursSpent).ToList()
+ 485:                     : allMetrics.OrderBy(m => m.TotalHoursSpent).ToList(),
+ 486: 
+ 487:                 "capacityutilization" => sortDescending
+ 488:                     ? allMetrics.OrderByDescending(m => (m.TotalHoursSpent / 160) * 100).ToList()
+ 489:                     : allMetrics.OrderBy(m => (m.TotalHoursSpent / 160) * 100).ToList(),
+ 490: 
+ 491:                 _ => allMetrics.OrderBy(m => m.Reviewer!.FirstName).ThenBy(m => m.Reviewer!.LastName).ToList()
+ 492:             };
+ 493: 
+ 494:             var totalCount = sortedMetrics.Count;
+ 495:             var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+ 496: 
+ 497:             // Get the page
+ 498:             var pageMetrics = sortedMetrics
+ 499:                 .Skip((pageNumber - 1) * pageSize)
+ 500:                 .Take(pageSize)
+ 501:                 .ToList();
+ 502: 
+ 503:             var pageWorkloads = await MapToWorkloadDtosAsync(pageMetrics);
+ 504: 
+ 505:             // Calculate overall summary from all metrics
+ 506:             var allWorkloads = await MapToWorkloadDtosAsync(sortedMetrics);
+ 507:             var totalAssignments = allWorkloads.Sum(w => w.TotalAssignments);
+ 508:             var totalApprovalRate = allWorkloads.Any() ? allWorkloads.Average(w => w.ApprovalRatePercentage) : 0;
+ 509:             var totalHours = allWorkloads.Sum(w => w.TotalHoursSpent);
+ 510:             var avgEscalationRate = allWorkloads.Any() ? allWorkloads.Average(w => w.EscalationRatePercentage) : 0;
+ 511:             var avgTurnaroundTime = allWorkloads.Any() ? allWorkloads.Average(w => w.AverageTurnaroundTimeHours) : 0;
+ 512:             var reviewersAtRisk = allWorkloads.Count(w => w.BurnoutRisk == "High");
+ 513:             var reviewersOverCapacity = allWorkloads.Count(w => w.CapacityUtilizationPercentage > 100);
+ 514: 
+ 515:             var overallHealth = totalApprovalRate >= 85 && avgEscalationRate < 10 ? "Excellent" :
+ 516:                                totalApprovalRate >= 75 && avgEscalationRate < 15 ? "Good" :
+ 517:                                totalApprovalRate >= 60 && avgEscalationRate < 20 ? "Fair" : "Poor";
+ 518: 
+ 519:             var summary = new WorkloadDistributionSummaryDto
+ 520:             {
+ 521:                 TotalReviewers = allWorkloads.Count,
+ 522:                 TotalAssignments = totalAssignments,
+ 523:                 AverageAssignmentsPerReviewer = allWorkloads.Any() ? totalAssignments / allWorkloads.Count : 0,
+ 524:                 MaxAssignments = allWorkloads.Any() ? allWorkloads.Max(w => w.TotalAssignments) : 0,
+ 525:                 MinAssignments = allWorkloads.Any() ? allWorkloads.Min(w => w.TotalAssignments) : 0,
+ 526:                 OverallApprovalRate = Math.Round(totalApprovalRate, 2),
+ 527:                 AverageEscalationRate = Math.Round(avgEscalationRate, 2),
+ 528:                 TeamAverageTurnaroundTime = Math.Round(avgTurnaroundTime, 2),
+ 529:                 OverallTeamHealth = overallHealth,
+ 530:                 TotalTeamHoursSpent = Math.Round(totalHours, 2),
+ 531:                 AverageHoursPerReviewer = Math.Round(totalHours / Math.Max(1, allWorkloads.Count), 2),
+ 532:                 TeamCapacityUtilization = Math.Round((totalHours / (160 * allWorkloads.Count)) * 100, 2),
+ 533:                 ReviewersAtRisk = reviewersAtRisk,
+ 534:                 ReviewersOverCapacity = reviewersOverCapacity,
+ 535:                 TeamWeeklyVelocity = Math.Round(allWorkloads.Average(w => w.WeeklyWorkloadAverage), 2),
+ 536:                 TeamWorkloadTrend = DetermineTeamTrend(allWorkloads),
+ 537:                 VelocityChangePercentage = Math.Round(allWorkloads.Average(w => w.VelocityChangePercentage), 2),
+ 538:                 HighRiskReviewers = reviewersAtRisk,
+ 539:                 ReviewerWorkloads = new List<WorkloadDistributionDto>()
+ 540:             };
+ 541: 
+ 542:             return new PaginatedWorkloadDistributionDto
+ 543:             {
+ 544:                 PageNumber = pageNumber,
+ 545:                 PageSize = pageSize,
+ 546:                 TotalCount = totalCount,
+ 547:                 TotalPages = totalPages,
+ 548:                 HasPreviousPage = pageNumber > 1,
+ 549:                 HasNextPage = pageNumber < totalPages,
+ 550:                 Summary = summary,
+ 551:                 ReviewerWorkloads = pageWorkloads
+ 552:             };
+ 553:         }
+ 554: 
+ 555:         /// <summary>
+ 556:         /// Determine overall team trend based on workload changes
+ 557:         /// </summary>
+ 558:         private string DetermineTeamTrend(List<WorkloadDistributionDto> workloads)
+ 559:         {
+ 560:             var avgVelocityChange = workloads.Any() ? workloads.Average(w => w.VelocityChangePercentage) : 0;
+ 561:             return avgVelocityChange > 5 ? "Increasing" :
+ 562:                    avgVelocityChange < -5 ? "Decreasing" : "Stable";
+ 563:         }
+ 564: 
+ 565:         private async Task<List<WorkloadDistributionDto>> MapToWorkloadDtosAsync(List<ReviewerPerformanceMetrics> metrics)
+ 566:         {
+ 567:             var totalAssignments = metrics.Sum(m => m.TotalAssignments);
+ 568:             var maxCapacityHours = 160.0; // Standard monthly capacity (40 hrs/week * 4 weeks)
+ 569: 
+ 570:             var now = DateTime.UtcNow;
+ 571:             var oneWeekAgo = now.AddDays(-7);
+ 572:             var twoWeeksAgo = now.AddDays(-14);
+ 573: 
+ 574:             // OPTIMIZATION: Batch load all assignments for all reviewers in ONE query
+ 575:             // Using a simpler query pattern to avoid WITH clause issues
+ 576:             var allAssignments = await _context.ApplicationAssignments
+ 577:                 .AsNoTracking()
+ 578:                 .Include(a => a.Application)
+ 579:                 .ToListAsync();
+ 580: 
+ 581:             // Group assignments by reviewer for fast lookup
+ 582:             var assignmentsByReviewer = allAssignments
+ 583:                 .GroupBy(a => a.ReviewerId)
+ 584:                 .ToDictionary(g => g.Key, g => g.ToList());
+ 585: 
+ 586:             var result = new List<WorkloadDistributionDto>();
+ 587: 
+ 588:             foreach (var m in metrics)
+ 589:             {
+ 590:                 // Calculate quality metrics
+ 591:                 var totalDocumentsReviewed = m.DocumentsApproved + m.DocumentsRejected + m.DocumentsRevisionRequested;
+ 592:                 var escalationRate = m.TotalAssignments > 0 ? (m.EscalatedAssignments * 100.0 / m.TotalAssignments) : 0;
+ 593:                 var revisionRate = totalDocumentsReviewed > 0 ? (m.DocumentsRevisionRequested * 100.0 / totalDocumentsReviewed) : 0;
+ 594: 
+ 595:                 // Estimate rework percentage (applications that had rework)
+ 596:                 var reworkPercentage = m.TotalAssignments > 0 
+ 597:                     ? Math.Min(100, escalationRate + revisionRate / 2) 
+ 598:                     : 0;
+ 599: 
+ 600:                 // Calculate capacity metrics
+ 601:                 var capacityUtilization = (m.TotalHoursSpent / maxCapacityHours) * 100;
+ 602:                 var estimatedHoursRemaining = m.ActiveAssignments > 0 
+ 603:                     ? m.AverageHoursPerAssignment * m.ActiveAssignments 
+ 604:                     : 0;
+ 605: 
+ 606:                 var estimatedCompletionDate = estimatedHoursRemaining > 0
+ 607:                     ? DateTime.UtcNow.AddHours(estimatedHoursRemaining)
+ 608:                     : (DateTime?)null;
+ 609: 
+ 610:                 // Determine capacity status based on utilization
+ 611:                 var capacityStatus = capacityUtilization > 100 ? "Red" :
+ 612:                                     capacityUtilization > 85 ? "Yellow" : "Green";
+ 613: 
+ 614:                 // Calculate burnout risk
+ 615:                 var burnoutRisk = capacityUtilization > 100 ? "High" :
+ 616:                                  capacityUtilization > 80 ? "Medium" : "Low";
+ 617: 
+ 618:                 // OPTIMIZATION: Calculate SLA from pre-loaded in-memory data instead of database query
+ 619:                 var reviewerAssignments = assignmentsByReviewer.TryGetValue(m.ReviewerId, out var assignments) 
+ 620:                     ? assignments 
+ 621:                     : new List<ApplicationAssignment>();
+ 622: 
+ 623:                 var slaCompliance = CalculateSLAComplianceInMemory(reviewerAssignments);
+ 624: 
+ 625:                 // OPTIMIZATION: Calculate trend from pre-loaded in-memory data instead of database query
+ 626:                 var (weeksAvgHours, lastWeekHours, prevWeekHours) = CalculateWeeklyHoursTrendInMemory(
+ 627:                     reviewerAssignments, 
+ 628:                     now, oneWeekAgo, twoWeeksAgo);
+ 629: 
+ 630:                 var velocityChange = prevWeekHours > 0 ? ((lastWeekHours - prevWeekHours) / prevWeekHours) * 100 : 0;
+ 631: 
+ 632:                 var avgDocsPerApp = m.TotalAssignments > 0 ? (double)totalDocumentsReviewed / m.TotalAssignments : 0;
+ 633: 
+ 634:                 var workloadTrend = velocityChange > 5 ? "Increasing" :
+ 635:                                    velocityChange < -5 ? "Decreasing" : "Stable";
+ 636: 
+ 637:                 result.Add(new WorkloadDistributionDto
+ 638:                 {
+ 639:                     // Basic Info
+ 640:                     ReviewerId = m.ReviewerId,
+ 641:                     ReviewerName = m.Reviewer != null ? $"{m.Reviewer.FirstName} {m.Reviewer.LastName}" : "Unknown",
+ 642:                     ReviewerEmail = m.Reviewer?.Email ?? string.Empty,
+ 643: 
+ 644:                     // Workload Breakdown
+ 645:                     ActiveAssignments = m.ActiveAssignments,
+ 646:                     PendingAssignments = m.TotalAssignments - m.CompletedAssignments - m.ActiveAssignments,
+ 647:                     CompletedAssignments = m.CompletedAssignments,
+ 648:                     TotalAssignments = m.TotalAssignments,
+ 649:                     WorkloadPercentage = totalAssignments > 0 ? Math.Round((m.TotalAssignments * 100.0 / totalAssignments), 2) : 0,
+ 650: 
+ 651:                     // Performance Metrics
+ 652:                     ApprovalRatePercentage = Math.Round(m.ApprovalRatePercentage, 2),
+ 653:                     RejectionRatePercentage = Math.Round(m.RejectionRatePercentage, 2),
+ 654:                     RevisionRequestRatePercentage = Math.Round(m.RevisionRequestRatePercentage, 2),
+ 655:                     AverageTurnaroundTimeHours = Math.Round(m.AverageTurnaroundTimeHours, 2),
+ 656:                     PerformanceRating = m.PerformanceRating,
+ 657: 
+ 658:                     // Quality & Escalation
+ 659:                     EscalatedAssignments = m.EscalatedAssignments,
+ 660:                     EscalationRatePercentage = Math.Round(escalationRate, 2),
+ 661:                     RevisionRequestRate = Math.Round(revisionRate, 2),
+ 662:                     ReworkPercentage = Math.Round(reworkPercentage, 2),
+ 663:                     DocumentsPending = 0,
+ 664:                     DocumentsApproved = m.DocumentsApproved,
+ 665:                     DocumentsRejected = m.DocumentsRejected,
+ 666:                     DocumentsRevisionRequested = m.DocumentsRevisionRequested,
+ 667:                     AverageDocumentsPerApplication = Math.Round(avgDocsPerApp, 2),
+ 668: 
+ 669:                     // Hours Tracking
+ 670:                     TotalHoursSpent = Math.Round(m.TotalHoursSpent, 2),
+ 671:                     AverageHoursPerAssignment = Math.Round(m.AverageHoursPerAssignment, 2),
+ 672:                     EstimatedHoursRemaining = Math.Round(estimatedHoursRemaining, 2),
+ 673:                     EstimatedCompletionDate = estimatedCompletionDate,
+ 674: 
+ 675:                     // Capacity & Health
+ 676:                     MaxCapacityHours = maxCapacityHours,
+ 677:                     CapacityUtilizationPercentage = Math.Round(capacityUtilization, 2),
+ 678:                     AvailableCapacityHours = Math.Round(Math.Max(0, maxCapacityHours - m.TotalHoursSpent), 2),
+ 679:                     CapacityStatus = capacityStatus,
+ 680:                     BurnoutRisk = burnoutRisk,
+ 681:                     SLAComplianceRate = Math.Round(slaCompliance, 2),
+ 682: 
+ 683:                     // Trend & Velocity
+ 684:                     WeeklyWorkloadAverage = Math.Round(weeksAvgHours, 2),
+ 685:                     WorkloadTrend = workloadTrend,
+ 686:                     AverageHoursLastWeek = Math.Round(lastWeekHours, 2),
+ 687:                     AverageHoursPreviousWeek = Math.Round(prevWeekHours, 2),
+ 688:                     VelocityChangePercentage = Math.Round(velocityChange, 2),
+ 689:                     LastMetricsUpdateTime = m.LastCalculatedAt
+ 690:                 });
+ 691:             }
+ 692: 
+ 693:             return result;
+ 694:         }
+ 695: 
+ 696:         /// <summary>
+ 697:         /// OPTIMIZED: Calculate SLA compliance from pre-loaded in-memory data instead of database query
+ 698:         /// This replaces CalculateSLAComplianceAsync for performance
+ 699:         /// </summary>
+ 700:         private double CalculateSLAComplianceInMemory(List<ApplicationAssignment> assignments)
+ 701:         {
+ 702:             const int slaDaysTarget = 2; // 48-hour SLA
+ 703: 
+ 704:             var completedAssignments = assignments
+ 705:                 .Where(a => !a.IsActive && a.Application != null && a.Application.CompletedAt.HasValue)
+ 706:                 .ToList();
+ 707: 
+ 708:             if (!completedAssignments.Any())
+ 709:                 return 100.0; // No completed assignments = perfect compliance
+ 710: 
+ 711:             var compliantCount = completedAssignments.Count(a =>
+ 712:                 (a.Application.CompletedAt.Value - a.AssignedAt).TotalDays <= slaDaysTarget);
+ 713: 
+ 714:             return (compliantCount * 100.0 / completedAssignments.Count);
+ 715:         }
+ 716: 
+ 717:         /// <summary>
+ 718:         /// OPTIMIZED: Calculate weekly trends from pre-loaded in-memory data instead of database queries
+ 719:         /// This replaces CalculateWeeklyHoursTrendAsync for performance
+ 720:         /// </summary>
+ 721:         private (double weeksAvgHours, double lastWeekHours, double prevWeekHours) CalculateWeeklyHoursTrendInMemory(
+ 722:             List<ApplicationAssignment> assignments, 
+ 723:             DateTime now, 
+ 724:             DateTime oneWeekAgo, 
+ 725:             DateTime twoWeeksAgo)
+ 726:         {
+ 727:             var lastWeekAssignments = assignments
+ 728:                 .Where(a => a.AssignedAt >= oneWeekAgo)
+ 729:                 .ToList();
+ 730: 
+ 731:             var prevWeekAssignments = assignments
+ 732:                 .Where(a => a.AssignedAt >= twoWeeksAgo && a.AssignedAt < oneWeekAgo)
+ 733:                 .ToList();
+ 734: 
+ 735:             // Calculate hours for each period
+ 736:             var lastWeekHours = CalculateTotalHours(lastWeekAssignments, now);
+ 737:             var prevWeekHours = CalculateTotalHours(prevWeekAssignments, now);
+ 738:             var averageOfTwoWeeks = (lastWeekHours + prevWeekHours) / 2.0;
+ 739: 
+ 740:             return (averageOfTwoWeeks, lastWeekHours, prevWeekHours);
+ 741:         }
+ 742: 
+ 743:         /// <summary>
+ 744:         /// Helper: Calculate total hours from a list of assignments
+ 745:         /// </summary>
+ 746:         private double CalculateTotalHours(List<ApplicationAssignment> assignments, DateTime now)
+ 747:         {
+ 748:             return assignments.Sum(a =>
+ 749:             {
+ 750:                 var hours = a.Application?.CompletedAt.HasValue == true && a.Application.CompletedAt > a.AssignedAt
+ 751:                     ? (a.Application.CompletedAt.Value - a.AssignedAt).TotalHours
+ 752:                     : (now - a.AssignedAt).TotalHours;
+ 753:                 return hours;
+ 754:             });
+ 755:         }
+ 756: 
+ 757:         // DEPRECATED: Old methods replaced by optimized in-memory versions above
+ 758: 
+ 759:         private ReviewerPerformanceMetricsDto MapToDto(ReviewerPerformanceMetrics metrics)
+ 760:         {
+ 761:             return new ReviewerPerformanceMetricsDto
+ 762:             {
+ 763:                 Id = metrics.Id,
+ 764:                 ReviewerId = metrics.ReviewerId,
+ 765:                 ReviewerName = metrics.Reviewer != null ? $"{metrics.Reviewer.FirstName} {metrics.Reviewer.LastName}" : "Unknown",
+ 766:                 TotalAssignments = metrics.TotalAssignments,
+ 767:                 ActiveAssignments = metrics.ActiveAssignments,
+ 768:                 CompletedAssignments = metrics.CompletedAssignments,
+ 769:                 DocumentsApproved = metrics.DocumentsApproved,
+ 770:                 DocumentsRejected = metrics.DocumentsRejected,
+ 771:                 DocumentsRevisionRequested = metrics.DocumentsRevisionRequested,
+ 772:                 AverageTurnaroundTimeHours = Math.Round(metrics.AverageTurnaroundTimeHours, 2),
+ 773:                 ApprovalRatePercentage = Math.Round(metrics.ApprovalRatePercentage, 2),
+ 774:                 RejectionRatePercentage = Math.Round(metrics.RejectionRatePercentage, 2),
+ 775:                 RevisionRequestRatePercentage = Math.Round(metrics.RevisionRequestRatePercentage, 2),
+ 776:                 EscalatedAssignments = metrics.EscalatedAssignments,
+ 777:                 TotalEscalationCount = metrics.TotalEscalationCount,
+ 778:                 LastCalculatedAt = metrics.LastCalculatedAt,
+ 779:                 PerformanceRating = metrics.PerformanceRating,
+ 780:                 AverageHoursPerAssignment = Math.Round(metrics.AverageHoursPerAssignment, 2)
+ 781:             };
+ 782:         }
+ 783: 
+ 784:         /// <summary>
+ 785:         /// Get reassignment history for the specified time period
+ 786:         /// </summary>
+ 787:         public async Task<List<ReassignmentHistoryDto>> GetReassignmentHistoryAsync(int days = 30, int pageSize = 100)
+ 788:         {
+ 789:             var startDate = DateTime.UtcNow.AddDays(-days);
+ 790: 
+ 791:             var history = await _context.ReassignmentHistories
+ 792:                 .AsNoTracking()
+ 793:                 .Where(h => h.ReassignedAt >= startDate)
+ 794:                 .Include(h => h.PreviousReviewer)
+ 795:                 .Include(h => h.NewReviewer)
+ 796:                 .Include(h => h.ReassignedByUser)
+ 797:                 .Include(h => h.ApplicationAssignment)
+ 798:                 .Include(h => h.ApplicationAssignment.Application)
+ 799:                 .OrderByDescending(h => h.ReassignedAt)
+ 800:                 .Take(pageSize)
+ 801:                 .ToListAsync();
+ 802: 
+ 803:             return history.Select(h => new ReassignmentHistoryDto
+ 804:             {
+ 805:                 Id = h.Id,
+ 806:                 ApplicationId = h.ApplicationId,
+ 807:                 ApplicationRefNumber = h.ApplicationAssignment?.Application?.ApplicationNumber ?? "N/A",
+ 808:                 ApplicationAssignmentId = h.ApplicationAssignmentId,
+ 809:                 PreviousReviewerId = h.PreviousReviewerId,
+ 810:                 PreviousReviewerName = h.PreviousReviewer?.FirstName + " " + h.PreviousReviewer?.LastName,
+ 811:                 NewReviewerId = h.NewReviewerId,
+ 812:                 NewReviewerName = h.NewReviewer?.FirstName + " " + h.NewReviewer?.LastName,
+ 813:                 ReassignmentReason = h.ReassignmentReason,
+ 814:                 ReassignmentDetails = h.ReassignmentDetails,
+ 815:                 ReassignedByUserId = h.ReassignedByUserId,
+ 816:                 ReassignedByUserName = h.ReassignedByUser != null ? (h.ReassignedByUser.FirstName + " " + h.ReassignedByUser.LastName) : "System",
+ 817:                 ReassignedAt = h.ReassignedAt,
+ 818:                 PreviousAssignmentStatus = h.PreviousAssignmentStatus,
+ 819:                 NewAssignmentStatus = h.NewAssignmentStatus,
+ 820:                 IsCompleted = h.IsCompleted
+ 821:             }).ToList();
+ 822:         }
+ 823: 
+ 824:         /// <summary>
+ 825:         /// Get reassignment history for a specific reviewer
+ 826:         /// </summary>
+ 827:         public async Task<List<ReassignmentHistoryDto>> GetReassignmentHistoryForReviewerAsync(Guid reviewerId, int days = 30)
+ 828:         {
+ 829:             var startDate = DateTime.UtcNow.AddDays(-days);
+ 830: 
+ 831:             var history = await _context.ReassignmentHistories
+ 832:                 .AsNoTracking()
+ 833:                 .Where(h => (h.PreviousReviewerId == reviewerId || h.NewReviewerId == reviewerId) && h.ReassignedAt >= startDate)
+ 834:                 .Include(h => h.PreviousReviewer)
+ 835:                 .Include(h => h.NewReviewer)
+ 836:                 .Include(h => h.ReassignedByUser)
+ 837:                 .Include(h => h.ApplicationAssignment)
+ 838:                 .Include(h => h.ApplicationAssignment.Application)
+ 839:                 .OrderByDescending(h => h.ReassignedAt)
+ 840:                 .ToListAsync();
+ 841: 
+ 842:             return history.Select(h => new ReassignmentHistoryDto
+ 843:             {
+ 844:                 Id = h.Id,
+ 845:                 ApplicationId = h.ApplicationId,
+ 846:                 ApplicationRefNumber = h.ApplicationAssignment?.Application?.ApplicationNumber ?? "N/A",
+ 847:                 ApplicationAssignmentId = h.ApplicationAssignmentId,
+ 848:                 PreviousReviewerId = h.PreviousReviewerId,
+ 849:                 PreviousReviewerName = h.PreviousReviewer?.FirstName + " " + h.PreviousReviewer?.LastName,
+ 850:                 NewReviewerId = h.NewReviewerId,
+ 851:                 NewReviewerName = h.NewReviewer?.FirstName + " " + h.NewReviewer?.LastName,
+ 852:                 ReassignmentReason = h.ReassignmentReason,
+ 853:                 ReassignmentDetails = h.ReassignmentDetails,
+ 854:                 ReassignedByUserId = h.ReassignedByUserId,
+ 855:                 ReassignedByUserName = h.ReassignedByUser != null ? (h.ReassignedByUser.FirstName + " " + h.ReassignedByUser.LastName) : "System",
+ 856:                 ReassignedAt = h.ReassignedAt,
+ 857:                 PreviousAssignmentStatus = h.PreviousAssignmentStatus,
+ 858:                 NewAssignmentStatus = h.NewAssignmentStatus,
+ 859:                 IsCompleted = h.IsCompleted
+ 860:             }).ToList();
+ 861:         }
+ 862: 
+ 863:         /// <summary>
+ 864:         /// Get reassignment audit metrics and statistics
+ 865:         /// </summary>
+ 866:         public async Task<ReassignmentAuditMetricsDto> GetReassignmentMetricsAsync()
+ 867:         {
+ 868:             var allReassignments = await _context.ReassignmentHistories
+ 869:                 .AsNoTracking()
+ 870:                 .Include(h => h.PreviousReviewer)
+ 871:                 .Include(h => h.NewReviewer)
+ 872:                 .Include(h => h.ReassignedByUser)
+ 873:                 .ToListAsync();
+ 874: 
+ 875:             var metrics = new ReassignmentAuditMetricsDto
+ 876:             {
+ 877:                 TotalReassignments = allReassignments.Count,
+ 878:                 ManualReassignments = allReassignments.Count(h => h.ReassignedByUserId != null),
+ 879:                 AutomaticReassignments = allReassignments.Count(h => h.ReassignedByUserId == null),
+ 880:                 ReassignmentsFromUnavailability = allReassignments.Count(h => h.ReassignmentReason == "AvailabilityChange"),
+ 881:                 WorkloadBalancingReassignments = allReassignments.Count(h => h.ReassignmentReason == "CriteriaBased" || h.ReassignmentReason == "AutoBalance"),
+ 882:                 PerformanceIssueReassignments = allReassignments.Count(h => h.ReassignmentReason == "PerformanceIssue"),
+ 883:                 ReassignmentsByReason = allReassignments
+ 884:                     .GroupBy(h => h.ReassignmentReason)
+ 885:                     .ToDictionary(g => g.Key, g => g.Count()),
+ 886:                 RecentReassignments = allReassignments
+ 887:                     .OrderByDescending(h => h.ReassignedAt)
+ 888:                     .Take(10)
+ 889:                     .Select(h => new ReassignmentHistoryDto
+ 890:                     {
+ 891:                         Id = h.Id,
+ 892:                         ApplicationId = h.ApplicationId,
+ 893:                         PreviousReviewerId = h.PreviousReviewerId,
+ 894:                         PreviousReviewerName = h.PreviousReviewer?.FirstName + " " + h.PreviousReviewer?.LastName,
+ 895:                         NewReviewerId = h.NewReviewerId,
+ 896:                         NewReviewerName = h.NewReviewer?.FirstName + " " + h.NewReviewer?.LastName,
+ 897:                         ReassignmentReason = h.ReassignmentReason,
+ 898:                         ReassignedAt = h.ReassignedAt
+ 899:                     }).ToList()
+ 900:             };
+ 901: 
+ 902:             // Count reassignments by reviewer (as source)
+ 903:             metrics.ReassignmentCountByReviewer = allReassignments
+ 904:                 .GroupBy(h => h.PreviousReviewerId)
+ 905:                 .ToDictionary(g => g.Key, g => g.Count());
+ 906: 
+ 907:             if (metrics.TotalReassignments > 0 && metrics.ReassignmentCountByReviewer.Count > 0)
+ 908:             {
+ 909:                 metrics.AverageReassignmentsPerReviewer = (double)metrics.TotalReassignments / metrics.ReassignmentCountByReviewer.Count;
+ 910:             }
+ 911: 
+ 912:             return metrics;
+ 913:         }
+ 914: 
+ 915:         /// <summary>
+ 916:         /// Get hours spent on a specific application by all reviewers.
+ 917:         /// Used for audit trail and application-level reporting.
+ 918:         /// </summary>
+ 919:         public async Task<List<ApplicationHoursTrackingDto>> GetApplicationHoursTrackingAsync(Guid applicationId)
+ 920:         {
+ 921:             var application = await _context.Applications
+ 922:                 .AsNoTracking()
+ 923:                 .FirstOrDefaultAsync(a => a.Id == applicationId);
+ 924: 
+ 925:             if (application == null)
+ 926:                 return new List<ApplicationHoursTrackingDto>();
+ 927: 
+ 928:             var assignments = await _context.ApplicationAssignments
+ 929:                 .AsNoTracking()
+ 930:                 .Where(a => a.ApplicationId == applicationId)
+ 931:                 .Include(a => a.Reviewer)
+ 932:                 .Include(a => a.Application)
+ 933:                 .ToListAsync();
+ 934: 
+ 935:             // Get all documents for this application with reviewer info
+ 936:             var allDocuments = await _context.ApplicationDocuments
+ 937:                 .AsNoTracking()
+ 938:                 .Where(d => d.ApplicationId == applicationId)
+ 939:                 .ToListAsync();
+ 940: 
+ 941:             var result = assignments.Select(a => 
+ 942:             {
+ 943:                 // Filter documents reviewed by THIS specific reviewer only
+ 944:                 var reviewedByThisReviewer = allDocuments
+ 945:                     .Where(d => d.ReviewedBy == a.ReviewerId)
+ 946:                     .ToList();
+ 947: 
+ 948:                 // Calculate hours only for active assignment period
+ 949:                 var hoursSpent = 0.0;
+ 950:                 if (application.CompletedAt.HasValue && application.CompletedAt > a.AssignedAt)
+ 951:                 {
+ 952:                     hoursSpent = (application.CompletedAt.Value - a.AssignedAt).TotalHours;
+ 953:                 }
+ 954:                 else
+ 955:                 {
+ 956:                     // If not completed, use current time but only if assignment is still active
+ 957:                     if (a.IsActive)
+ 958:                     {
+ 959:                         hoursSpent = (DateTime.UtcNow - a.AssignedAt).TotalHours;
+ 960:                     }
+ 961:                 }
+ 962: 
+ 963:                 return new ApplicationHoursTrackingDto
+ 964:                 {
+ 965:                     ApplicationId = applicationId,
+ 966:                     ApplicationNumber = application.ApplicationNumber,
+ 967:                     ApplicantName = $"{application.FirstName} {application.LastName}".Trim(),
+ 968:                     AssignedAt = a.AssignedAt,
+ 969:                     CompletedAt = application.CompletedAt,
+ 970:                     ReviewerId = a.ReviewerId,
+ 971:                     ReviewerName = a.Reviewer != null ? $"{a.Reviewer.FirstName} {a.Reviewer.LastName}".Trim() : "Unknown",
+ 972:                     ReviewerEmail = a.Reviewer?.Email ?? string.Empty,
+ 973:                     HoursSpent = hoursSpent,
+ 974:                     DocumentsReviewed = reviewedByThisReviewer.Count,
+ 975:                     DocumentsApproved = reviewedByThisReviewer.Count(d => d.ReviewStatus == "approved"),
+ 976:                     DocumentsRejected = reviewedByThisReviewer.Count(d => d.ReviewStatus == "rejected"),
+ 977:                     DocumentsRevisionRequested = reviewedByThisReviewer.Count(d => d.ReviewStatus == "revision_requested")
+ 978:                 };
+ 979:             }).ToList();
+ 980: 
+ 981:             return result;
+ 982:         }
+ 983: 
+ 984:         /// <summary>
+ 985:         /// Get audit summary of hours spent by a specific reviewer over a date range.
+ 986:         /// Used for compliance and billing purposes.
+ 987:         /// </summary>
+ 988:         public async Task<ReviewerHoursAuditSummaryDto> GetReviewerHoursAuditSummaryAsync(
+ 989:             Guid reviewerId,
+ 990:             DateTime? dateFrom = null,
+ 991:             DateTime? dateTo = null)
+ 992:         {
+ 993:             var reviewer = await _context.Users
+ 994:                 .AsNoTracking()
+ 995:                 .FirstOrDefaultAsync(u => u.Id == reviewerId);
+ 996: 
+ 997:             if (reviewer == null)
+ 998:                 throw new InvalidOperationException($"Reviewer with ID '{reviewerId}' not found");
+ 999: 
+1000:             var startDate = dateFrom ?? DateTime.UtcNow.AddMonths(-1);
+1001:             var endDate = dateTo ?? DateTime.UtcNow;
+1002: 
+1003:             // Get all assignments for this reviewer in the date range
+1004:             var assignments = await _context.ApplicationAssignments
+1005:                 .AsNoTracking()
+1006:                 .Where(a => a.ReviewerId == reviewerId && a.AssignedAt >= startDate && a.AssignedAt <= endDate)
+1007:                 .Include(a => a.Application)
+1008:                 .ToListAsync();
+1009: 
+1010:             var applicationIds = assignments.Select(a => a.ApplicationId).Distinct().ToList();
+1011: 
+1012:             // Get document reviews for these applications, filtered by THIS reviewer
+1013:             var documentReviews = await _context.ApplicationDocuments
+1014:                 .AsNoTracking()
+1015:                 .Where(d => applicationIds.Contains(d.ApplicationId) && d.ReviewedBy == reviewerId)
+1016:                 .ToListAsync();
+1017: 
+1018:             // Calculate hours for each application assignment
+1019:             var applicationHours = new List<ApplicationHoursTrackingDto>();
+1020:             foreach (var assignment in assignments)
+1021:             {
+1022:                 var app = assignment.Application;
+1023: 
+1024:                 // Count documents reviewed by this reviewer for this specific application
+1025:                 var docsReviewedByThisReviewer = documentReviews
+1026:                     .Where(d => d.ApplicationId == assignment.ApplicationId)
+1027:                     .ToList();
+1028: 
+1029:                 // Calculate hours: from assignment to completion (or current time if still active)
+1030:                 var hoursSpent = 0.0;
+1031:                 if (app != null && app.CompletedAt.HasValue && app.CompletedAt > assignment.AssignedAt)
+1032:                 {
+1033:                     hoursSpent = (app.CompletedAt.Value - assignment.AssignedAt).TotalHours;
+1034:                 }
+1035:                 else if (assignment.IsActive && app != null)
+1036:                 {
+1037:                     // Only count current time if assignment is still active
+1038:                     hoursSpent = (DateTime.UtcNow - assignment.AssignedAt).TotalHours;
+1039:                 }
+1040: 
+1041:                 applicationHours.Add(new ApplicationHoursTrackingDto
+1042:                 {
+1043:                     ApplicationId = assignment.ApplicationId,
+1044:                     ApplicationNumber = app?.ApplicationNumber ?? "Unknown",
+1045:                     ApplicantName = app != null ? $"{app.FirstName} {app.LastName}".Trim() : "Unknown",
+1046:                     AssignedAt = assignment.AssignedAt,
+1047:                     CompletedAt = app?.CompletedAt,
+1048:                     ReviewerId = reviewerId,
+1049:                     ReviewerName = $"{reviewer.FirstName} {reviewer.LastName}".Trim(),
+1050:                     ReviewerEmail = reviewer.Email,
+1051:                     HoursSpent = hoursSpent,
+1052:                     DocumentsReviewed = docsReviewedByThisReviewer.Count,
+1053:                     DocumentsApproved = docsReviewedByThisReviewer.Count(d => d.ReviewStatus == "approved"),
+1054:                     DocumentsRejected = docsReviewedByThisReviewer.Count(d => d.ReviewStatus == "rejected"),
+1055:                     DocumentsRevisionRequested = docsReviewedByThisReviewer.Count(d => d.ReviewStatus == "revision_requested")
+1056:                 });
+1057:             }
+1058: 
+1059:             var totalHours = applicationHours.Sum(a => a.HoursSpent);
+1060:             var totalDocs = applicationHours.Sum(a => a.DocumentsReviewed);
+1061: 
+1062:             return new ReviewerHoursAuditSummaryDto
+1063:             {
+1064:                 ReviewerId = reviewerId,
+1065:                 ReviewerName = $"{reviewer.FirstName} {reviewer.LastName}".Trim(),
+1066:                 ReviewerEmail = reviewer.Email,
+1067:                 DateFrom = dateFrom,
+1068:                 DateTo = dateTo,
+1069:                 TotalHoursSpent = totalHours,
+1070:                 TotalApplicationsProcessed = applicationHours.Count,
+1071:                 TotalDocumentsReviewed = totalDocs,
+1072:                 AverageHoursPerApplication = applicationHours.Count > 0 ? totalHours / applicationHours.Count : 0,
+1073:                 ApplicationDetails = applicationHours
+1074:             };
+1075:         }
+1076:     }
+1077: }
+
+===== IReviewerPerformanceService.cs : NOT FOUND =====
+
+===== DashboardService.cs : NOT FOUND =====
+
+===== IDashboardService.cs : NOT FOUND =====
+
+===== All analytics / dashboard related files (names and sizes) =====
+\Controllers\AnalyticsController.cs  (1040 lines)
+\DTOs\Performance\ReviewerPerformanceMetricsDto.cs  (25 lines)
+\Models\ReviewerPerformanceMetrics.cs  (127 lines)
+\Services\ReviewerPerformanceService.cs  (1077 lines)

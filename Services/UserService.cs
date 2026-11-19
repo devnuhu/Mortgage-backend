@@ -12,11 +12,13 @@ namespace MMGT.API.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly IEmailService _emailService;
+        private readonly IAccountEmailService _accountEmail;
 
-        public UserService(ApplicationDbContext context, IEmailService emailService)
+        public UserService(ApplicationDbContext context, IEmailService emailService, IAccountEmailService accountEmail)
         {
             _context = context;
             _emailService = emailService;
+            _accountEmail = accountEmail;
         }
 
         public async Task<UserDto> GetUserByIdAsync(Guid id)
@@ -47,6 +49,8 @@ namespace MMGT.API.Services
 
         public async Task<UserDto> CreateUserAsync(CreateUserRequest request)
         {
+            if (!UserRoles.IsValid(request.Role))
+                throw new Exception($"'{request.Role}' is not a valid role. Valid roles: {string.Join(", ", UserRoles.Values)}.");
             // Check if email already exists
             if (await _context.Users.AnyAsync(u => u.Email == request.Email))
             {
@@ -67,29 +71,10 @@ namespace MMGT.API.Services
 
             var now = DateTime.UtcNow;
 
-            // Determine password and token behavior:
-            // - If admin provided a TemporaryPassword in the request, use it (user can login immediately).
-            // - Otherwise, generate a placeholder password and generate a first-login token (emailed to the user).
-            string passwordToHash;
+            // A strong temporary password is always generated and emailed to the new user. They must change it at first sign-in.
+            var passwordToHash = TemporaryPasswordGenerator.Generate();
             string? hashedToken = null;
             DateTime? expiry = null;
-            string? tokenToSend = null;
-
-            if (!string.IsNullOrWhiteSpace(request.TemporaryPassword))
-            {
-                passwordToHash = request.TemporaryPassword;
-            }
-            else
-            {
-                // Generate a safe placeholder password so account has a valid hash
-                passwordToHash = GenerateTempPassword();
-
-                // Generate one-time token and store hashed token + expiry for first-login flow
-                tokenToSend = SecurityHelpers.GenerateUrlSafeToken();
-                hashedToken = SecurityHelpers.HashToken(tokenToSend);
-                expiry = DateTime.UtcNow.AddHours(2);
-            }
-
             var hashedPassword = BCrypt.Net.BCrypt.HashPassword(passwordToHash);
 
             var user = new User
@@ -113,18 +98,10 @@ namespace MMGT.API.Services
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            // Only send first-login link email when a token was generated (i.e., admin didn't provide a temp password)
-            if (tokenToSend != null)
-            {
-                try
-                {
-                    _ = Task.Run(() => _emailService.SendFirstLoginLinkAsync(user.Id, user.Email, tokenToSend));
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Failed to queue/send first-login email: " + ex.Message);
-                }
-            }
+            // Email the temporary password. If emails are on and the send fails, say so (the user exists; Reset password issues a new one).
+            var welcomeSent = await _accountEmail.SendTemporaryPasswordAsync(user.Email, user.FirstName, passwordToHash, AccountEmailReason.NewAccount);
+            if (!welcomeSent && _accountEmail.CanSend())
+                throw new Exception("The user was created, but the welcome email could not be sent. Use Reset password to issue a temporary password.");
 
             return await GetUserByIdAsync(user.Id);
         }
@@ -155,6 +132,33 @@ namespace MMGT.API.Services
             return true;
         }
 
+        public async Task<bool> SetUserActiveAsync(Guid actorId, Guid userId, bool isActive, string? reason)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null)
+                return false;
+        
+            if (!isActive)
+            {
+                if (userId == actorId)
+                    throw new Exception("You cannot deactivate your own account.");
+        
+                if (user.Role == "SUPER_ADMIN" && user.IsActive &&
+                    !await _context.Users.AnyAsync(u => u.Id != userId && u.Role == "SUPER_ADMIN" && u.IsActive))
+                    throw new Exception("The last active Super Admin cannot be deactivated.");
+            }
+        
+            if (user.IsActive == isActive)
+                return true;
+        
+            user.IsActive = isActive;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        
+            Console.WriteLine($"[USER-STATUS] user {userId} {(isActive ? "reactivated" : "deactivated")} by {actorId}. Reason: {(string.IsNullOrWhiteSpace(reason) ? "none given" : reason.Trim())}");
+            return true;
+        }
+        
         public async Task<string?> ResetUserPasswordAsync(Guid userId)
         {
             var user = await _context.Users.FindAsync(userId);
@@ -162,7 +166,7 @@ namespace MMGT.API.Services
                 return null;
 
             // Generate new temporary password
-            var tempPassword = GenerateTempPassword();
+            var tempPassword = TemporaryPasswordGenerator.Generate();
             var hashedPassword = BCrypt.Net.BCrypt.HashPassword(tempPassword);
 
             // Update user password
@@ -172,7 +176,7 @@ namespace MMGT.API.Services
 
             await _context.SaveChangesAsync();
 
-            // TODO: Send email with new temporary password to user.Email
+            await _accountEmail.SendTemporaryPasswordAsync(user.Email, user.FirstName, tempPassword, AccountEmailReason.AdminReset);
             return tempPassword;
         }
 
@@ -181,20 +185,15 @@ namespace MMGT.API.Services
             var user = await _context.Users.FindAsync(userId);
             if (user == null || !user.IsActive) return false;
 
-            var token = SecurityHelpers.GenerateUrlSafeToken();
-            user.FirstLoginTokenHash = SecurityHelpers.HashToken(token);
-            user.FirstLoginTokenExpiresAt = DateTime.UtcNow.AddHours(2);
+            var temporaryPassword = TemporaryPasswordGenerator.Generate();
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword);
+            user.IsFirstLogin = true;
+            user.FirstLoginTokenHash = null;
+            user.FirstLoginTokenExpiresAt = null;
             user.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
-            try
-            {
-                _ = Task.Run(() => _emailService.SendFirstLoginLinkAsync(user.Id, user.Email, token));
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Failed to resend first-login email: " + ex.Message);
-            }
+            await _accountEmail.SendTemporaryPasswordAsync(user.Email, user.FirstName, temporaryPassword, AccountEmailReason.NewAccount);
 
             return true;
         }

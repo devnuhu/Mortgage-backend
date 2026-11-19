@@ -77,6 +77,17 @@ namespace MMGT.API.Models
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
         public DateTime? SubmittedAt { get; set; }
+        /// <summary>When the client last resubmitted after a rejection (null if never). SubmittedAt always stays the FIRST submission.</summary>
+        public DateTime? ResubmittedAt { get; set; }
+
+        /// <summary>How many times the client has resubmitted after a rejection.</summary>
+        public int ResubmissionCount { get; set; }
+        
+        // HNI flag (high net worth), set by the API from CPAS. NULL = not checked yet or CPAS unreachable. The balance is never stored.
+        public bool? IsHni { get; set; }
+        public DateTime? HniCheckedAt { get; set; }
+        public DateTime? HniLastAttemptAt { get; set; }
+        public decimal? HniThreshold { get; set; }
 
         /// <summary>
         /// When the application review was completed (approved or rejected)
@@ -110,5 +121,9 @@ namespace MMGT.API.Models
         public virtual ICollection<ApplicationDocument> Documents { get; set; } = new List<ApplicationDocument>();
         public virtual ICollection<ApplicationReviewHistory> ReviewHistory { get; set; } = new List<ApplicationReviewHistory>();
         public virtual ICollection<ApplicationAssignment> Assignments { get; set; } = new List<ApplicationAssignment>();
+
+        // Step-down: IsLocked while a request is open; IsArchived once stepped down (soft delete, recoverable).
+        public bool IsLocked { get; set; } = false;
+        public bool IsArchived { get; set; } = false;
     }
 }

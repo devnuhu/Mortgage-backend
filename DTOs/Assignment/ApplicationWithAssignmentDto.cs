@@ -100,5 +100,9 @@ namespace MMGT.API.DTOs.Assignment
         /// When the application was submitted for review
         /// </summary>
         public DateTime? ApplicationSubmittedAt { get; set; }
+        
+        /// <summary>HNI flag from the API. null = not checked yet. No balance is ever returned.</summary>
+        public bool? IsHni { get; set; }
+        public DateTime? HniCheckedAt { get; set; }
     }
 }

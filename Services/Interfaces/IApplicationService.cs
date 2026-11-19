@@ -18,7 +18,7 @@ namespace MMGT.API.Services.Interfaces
         Task<ApplicationDto> GetApplicationByIdAsync(Guid id);
         Task<ApplicationDto> CreateApplicationAsync(Guid userId, CreateApplicationRequest request);
         Task<ApplicationDto> UpdateApplicationStatusAsync(Guid id, Guid reviewerId, UpdateApplicationStatusRequest request);
-        Task<bool> SubmitApplicationAsync(Guid id);
+        Task<bool> SubmitApplicationAsync(Guid id, string? note = null);
         Task<bool> DeleteApplicationAsync(Guid id);
         Task<List<ReviewHistoryDto>> GetApplicationReviewHistoryAsync(Guid applicationId);
         Task<PaginatedResponse<ReviewHistoryDto>> GetApplicationReviewHistoryPagedAsync(Guid applicationId, PaginationRequest pagination);
@@ -36,7 +36,7 @@ namespace MMGT.API.Services.Interfaces
             DateTime? submittedFromDate = null,
             DateTime? submittedToDate = null,
             int pageNumber = 1,
-            int pageSize = 50);
+            int pageSize = 50, string? status = null, Guid? pmiCompanyId = null, bool? isHni = null, bool submittedOnly = false);
 
         Task<ApplicationDetailsDto> GetApplicationDetailsAsync(Guid applicationId);
 

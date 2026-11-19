@@ -7,6 +7,7 @@ using MMGT.API.Exceptions;
 using MMGT.API.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Text;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace MMGT.API.Services
 {
@@ -14,11 +15,18 @@ namespace MMGT.API.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly JwtHelper _jwtHelper;
+        private readonly IAccountEmailService _accountEmail;
+        private readonly IMemoryCache _cache;
+        // Times are stored in UTC. Mark them as UTC so the API returns them with a Z and the screen shows the right local time.
+        private static DateTime? AsUtc(DateTime? value) =>
+            value.HasValue ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc) : (DateTime?)null;
 
-        public AuthService(ApplicationDbContext context, JwtHelper jwtHelper)
+        public AuthService(ApplicationDbContext context, JwtHelper jwtHelper, IAccountEmailService accountEmail, IMemoryCache cache)
         {
             _context = context;
             _jwtHelper = jwtHelper;
+            _accountEmail = accountEmail;
+            _cache = cache;
         }
 
         public async Task<LoginResponse> LoginAsync(LoginRequest request)
@@ -116,6 +124,8 @@ namespace MMGT.API.Services
             {
                 throw new DatabaseException($"Failed to update password: {ex.Message}");
             }
+            // Security notice to the user. A failed email never undoes the change.
+            await _accountEmail.SendPasswordChangedAsync(user.Email, user.FirstName);
 
             return true;
         }
@@ -126,7 +136,7 @@ namespace MMGT.API.Services
             return principal != null;
         }
 
-        public async Task<AdminResetPasswordResponse> AdminResetPasswordAsync(Guid adminId, Guid targetUserId)
+        public async Task<AdminResetPasswordResponse> AdminResetPasswordAsync(Guid adminId, Guid targetUserId, bool sendEmail = true)
         {
             // Verify admin exists and has proper role
             var admin = await _context.Users.FindAsync(adminId);
@@ -150,7 +160,7 @@ namespace MMGT.API.Services
             try
             {
                 // Generate temporary password (12 characters with mix of upper, lower, numbers, special)
-                var temporaryPassword = GenerateTemporaryPassword();
+                var temporaryPassword = TemporaryPasswordGenerator.Generate();
 
                 // Hash and set the temporary password
                 targetUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword);
@@ -158,14 +168,20 @@ namespace MMGT.API.Services
                 targetUser.UpdatedAt = DateTime.UtcNow;
 
                 await _context.SaveChangesAsync();
+                
+                var emailed = sendEmail && await _accountEmail.SendTemporaryPasswordAsync(targetUser.Email, targetUser.FirstName, temporaryPassword, AccountEmailReason.AdminReset);
 
                 return new AdminResetPasswordResponse
                 {
                     UserId = targetUser.Id,
                     UserEmail = targetUser.Email,
                     UserName = $"{targetUser.FirstName} {targetUser.LastName}",
-                    TemporaryPassword = temporaryPassword,
-                    Message = $"Password reset successful for {targetUser.FirstName} {targetUser.LastName}. Share the temporary password with the user. They will be required to change it on first login."
+                    TemporaryPassword = emailed ? string.Empty : temporaryPassword,
+                    Message = !sendEmail
+                        ? $"Temporary password generated for {targetUser.FirstName} {targetUser.LastName}. It was NOT emailed, so give it to the user yourself. They will be required to change it on first login."
+                        : emailed
+                            ? $"Password reset successful for {targetUser.FirstName} {targetUser.LastName}. A temporary password has been emailed to {targetUser.Email}. They will be required to change it on first login."
+                            : $"Password reset successful for {targetUser.FirstName} {targetUser.LastName}. The email could not be sent, so share the temporary password with the user. They will be required to change it on first login."
                 };
             }
             catch (Exception ex)
@@ -174,6 +190,43 @@ namespace MMGT.API.Services
             }
         }
 
+        public async Task ForgotPasswordAsync(string email)
+        {
+            var address = (email ?? string.Empty).Trim();
+            if (address.Length == 0) return;
+
+            // Without working account emails the user would never receive the new password, so change nothing.
+            if (!_accountEmail.CanSend())
+            {
+                Console.WriteLine("[FORGOT-PASSWORD] Ignored: account emails are switched off or Infobip is not set up.");
+                return;
+            }
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == address && u.IsActive);
+            if (user == null)
+            {
+                // Same amount of work as a real request, so the response time does not reveal whether the address is registered.
+                BCrypt.Net.BCrypt.HashPassword(TemporaryPasswordGenerator.Generate());
+                return;
+            }
+
+            // One reset per account every 15 minutes, so nobody can keep resetting someone else's password.
+            var throttleKey = "pwd-reset:" + user.Id;
+            if (_cache.TryGetValue(throttleKey, out _)) return;
+            _cache.Set(throttleKey, true, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15), Size = 1 });
+
+            var temporaryPassword = TemporaryPasswordGenerator.Generate();
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(temporaryPassword);
+            user.IsFirstLogin = true;
+            user.FirstLoginTokenHash = null;
+            user.FirstLoginTokenExpiresAt = null;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            var to = user.Email;
+            var name = user.FirstName;
+            _ = Task.Run(() => _accountEmail.SendTemporaryPasswordAsync(to, name, temporaryPassword, AccountEmailReason.ForgotPassword));
+        }
         private string GenerateTemporaryPassword()
         {
             const string uppercaseChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -295,8 +348,8 @@ namespace MMGT.API.Services
                 DisabledMessage = s.DisabledMessage,
                 ChangeReason = s.ChangeReason,
                 IsScheduled = s.IsScheduled,
-                ScheduledStartTime = s.ScheduledStartTime,
-                ScheduledEndTime = s.ScheduledEndTime,
+                ScheduledStartTime = AsUtc(s.ScheduledStartTime),
+                ScheduledEndTime = AsUtc(s.ScheduledEndTime),
                 ScheduledReason = s.ScheduledReason,
                 LastModifiedBy = s.LastModifiedBy,
                 LastModifiedAt = s.LastModifiedAt,
@@ -323,8 +376,8 @@ namespace MMGT.API.Services
                 DisabledMessage = setting.DisabledMessage,
                 ChangeReason = setting.ChangeReason,
                 IsScheduled = setting.IsScheduled,
-                ScheduledStartTime = setting.ScheduledStartTime,
-                ScheduledEndTime = setting.ScheduledEndTime,
+                ScheduledStartTime = AsUtc(setting.ScheduledStartTime),
+                ScheduledEndTime = AsUtc(setting.ScheduledEndTime),
                 ScheduledReason = setting.ScheduledReason,
                 LastModifiedBy = setting.LastModifiedBy,
                 LastModifiedAt = setting.LastModifiedAt,
@@ -392,8 +445,8 @@ namespace MMGT.API.Services
                 DisabledMessage = existing.DisabledMessage,
                 ChangeReason = existing.ChangeReason,
                 IsScheduled = existing.IsScheduled,
-                ScheduledStartTime = existing.ScheduledStartTime,
-                ScheduledEndTime = existing.ScheduledEndTime,
+                ScheduledStartTime = AsUtc(existing.ScheduledStartTime),
+                ScheduledEndTime = AsUtc(existing.ScheduledEndTime),
                 ScheduledReason = existing.ScheduledReason,
                 LastModifiedBy = existing.LastModifiedBy,
                 LastModifiedAt = existing.LastModifiedAt,
@@ -416,21 +469,16 @@ namespace MMGT.API.Services
                 throw new ResourceNotFoundException("User", modifiedBy.ToString());
             }
 
-            // Use provided timezone override, or fall back to user's stored timezone, default to Nigeria
-            var timezoneOffsetHours = request.TimezoneOffsetHours.HasValue 
-                ? request.TimezoneOffsetHours.Value 
-                : (adminUser?.TimezoneOffsetHours ?? 1);
+            // Nigeria time (WAT) is UTC+1 all year, no daylight saving. A time sent with a Z (UTC) is used as it is.
+            // A time with no zone is read as Nigeria time. The admin's profile offset is not used any more.
+            var timezoneOffsetHours = 1;
+            static DateTime ToUtc(DateTime value) =>
+                value.Kind == DateTimeKind.Utc ? value
+                : value.Kind == DateTimeKind.Local ? value.ToUniversalTime()
+                : DateTime.SpecifyKind(value.AddHours(-1), DateTimeKind.Utc);
 
-            // Validate timezone offset is reasonable (-14 to +14 hours)
-            if (Math.Abs(timezoneOffsetHours) > 14)
-            {
-                throw new ValidationException("Timezone offset must be between -14 and +14 hours");
-            }
-
-            // Convert user's local times to UTC based on timezone offset
-            // If user (Nigeria, UTC+1) submits 3:00 PM, subtract 1 hour to get 2:00 PM UTC
-            var utcStartTime = request.ScheduledStartTime.AddHours(-timezoneOffsetHours);
-            var utcEndTime = request.ScheduledEndTime.AddHours(-timezoneOffsetHours);
+            var utcStartTime = ToUtc(request.ScheduledStartTime);
+            var utcEndTime = ToUtc(request.ScheduledEndTime);
 
             // Validate schedule times
             if (utcStartTime >= utcEndTime)
@@ -480,8 +528,8 @@ namespace MMGT.API.Services
                     DisabledMessage = newSetting.DisabledMessage,
                     ChangeReason = newSetting.ChangeReason,
                     IsScheduled = newSetting.IsScheduled,
-                    ScheduledStartTime = newSetting.ScheduledStartTime,
-                    ScheduledEndTime = newSetting.ScheduledEndTime,
+                    ScheduledStartTime = AsUtc(newSetting.ScheduledStartTime),
+                    ScheduledEndTime = AsUtc(newSetting.ScheduledEndTime),
                     ScheduledReason = newSetting.ScheduledReason,
                     LastModifiedBy = newSetting.LastModifiedBy,
                     LastModifiedAt = newSetting.LastModifiedAt,
@@ -509,8 +557,8 @@ namespace MMGT.API.Services
                 DisabledMessage = existing.DisabledMessage,
                 ChangeReason = existing.ChangeReason,
                 IsScheduled = existing.IsScheduled,
-                ScheduledStartTime = existing.ScheduledStartTime,
-                ScheduledEndTime = existing.ScheduledEndTime,
+                ScheduledStartTime = AsUtc(existing.ScheduledStartTime),
+                ScheduledEndTime = AsUtc(existing.ScheduledEndTime),
                 ScheduledReason = existing.ScheduledReason,
                 LastModifiedBy = existing.LastModifiedBy,
                 LastModifiedAt = existing.LastModifiedAt,
@@ -555,8 +603,8 @@ namespace MMGT.API.Services
                 DisabledMessage = existing.DisabledMessage,
                 ChangeReason = existing.ChangeReason,
                 IsScheduled = existing.IsScheduled,
-                ScheduledStartTime = existing.ScheduledStartTime,
-                ScheduledEndTime = existing.ScheduledEndTime,
+                ScheduledStartTime = AsUtc(existing.ScheduledStartTime),
+                ScheduledEndTime = AsUtc(existing.ScheduledEndTime),
                 ScheduledReason = existing.ScheduledReason,
                 LastModifiedBy = existing.LastModifiedBy,
                 LastModifiedAt = existing.LastModifiedAt,

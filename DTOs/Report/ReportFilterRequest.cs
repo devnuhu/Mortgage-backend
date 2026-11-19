@@ -23,6 +23,10 @@ namespace MMGT.API.DTOs.Report
 
         // User filtering
         public Guid? UserId { get; set; }
+        // Reviewer filtering (reviewer currently assigned to the application)
+        public Guid? ReviewerId { get; set; }
+        // Who asked for the export (set by the controller; used only for the Report information sheet)
+        public Guid? RequestedByUserId { get; set; }
 
         // Text search
         public string? SearchTerm { get; set; }

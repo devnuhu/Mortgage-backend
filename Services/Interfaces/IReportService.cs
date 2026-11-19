@@ -9,5 +9,8 @@ namespace MMGT.API.Services.Interfaces
         Task<ReportResponse<ApplicationDto>> GenerateApplicationReportFullAsync(ReportFilterRequest filter);
         Task<ReportSummaryDto> GetReportSummaryAsync(ReportFilterRequest filter);
         Task<byte[]> ExportApplicationsToExcelAsync(ReportFilterRequest filter);
+        Task<ReportAnalyticsDto> GetReportAnalyticsAsync(ReportFilterRequest filter);
+        Task<ReviewerActivityReportDto> GetReviewerActivityAsync(DateTime? dateFrom, DateTime? dateTo, bool includeDecisions = true);
+        Task<byte[]> ExportReviewerActivityToExcelAsync(DateTime? dateFrom, DateTime? dateTo, Guid? requestedByUserId);
     }
 }

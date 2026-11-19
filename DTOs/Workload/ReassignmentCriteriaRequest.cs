@@ -31,5 +31,10 @@ namespace MMGT.API.DTOs.Workload
         /// Maximum number of applications to reassign
         /// </summary>
         public int MaxReassignments { get; set; } = 20;
+        /// <summary>Largest difference in open items allowed between reviewers before work is moved.</summary>
+        public int MaxDifference { get; set; } = 3;
+
+        /// <summary>Only work out the moves and return them; do not make them.</summary>
+        public bool PreviewOnly { get; set; } = false;
     }
 }

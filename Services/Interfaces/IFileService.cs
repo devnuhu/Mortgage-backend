@@ -5,7 +5,7 @@ namespace MMGT.API.Services.Interfaces
 {
     public interface IFileService
     {
-        Task<FileUploadResponse> UploadFileAsync(IFormFile file, Guid applicationId, string documentType, Guid performedById);
+        Task<FileUploadResponse> UploadFileAsync(IFormFile file, Guid applicationId, string documentType, Guid performedById, string? documentName = null);
         Task<FileUploadResponse> GetFileAsync(Guid fileId);
         Task<List<FileUploadResponse>> GetFilesByApplicationAsync(Guid applicationId);
         Task<bool> DeleteFileAsync(Guid fileId, Guid performedById);

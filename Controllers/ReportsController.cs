@@ -39,7 +39,7 @@ namespace MMGT.API.Controllers
         /// <param name="sortDescending">Sort direction (default: true for descending)</param>
         /// <returns>Paginated report with essential fields and summary statistics</returns>
         [HttpGet("applications")]
-        [Authorize(Roles = "SUPER_ADMIN,ADMIN,LEAD_REVIEWER")]
+        [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
         public async Task<ActionResult<ReportResponse<ApplicationReportDto>>> GetApplicationReport(
             [FromQuery] int pageNumber = 1,
             [FromQuery] int pageSize = 100,
@@ -50,6 +50,7 @@ namespace MMGT.API.Controllers
             [FromQuery] string? priorities = null,
             [FromQuery] Guid? pmiCompanyId = null,
             [FromQuery] Guid? userId = null,
+            [FromQuery] Guid? reviewerId = null,
             [FromQuery] string? searchTerm = null,
             [FromQuery] string sortBy = "CreatedAt",
             [FromQuery] bool sortDescending = true)
@@ -67,6 +68,7 @@ namespace MMGT.API.Controllers
                     Priorities = ParseCommaSeparatedList(priorities),
                     PmiCompanyId = pmiCompanyId,
                     UserId = userId,
+                    ReviewerId = reviewerId,
                     SearchTerm = searchTerm,
                     SortBy = sortBy,
                     SortDescending = sortDescending
@@ -101,7 +103,7 @@ namespace MMGT.API.Controllers
         /// <param name="sortDescending">Sort direction (default: true for descending)</param>
         /// <returns>Paginated full report with all application details and summary statistics</returns>
         [HttpGet("applications/full")]
-        [Authorize(Roles = "SUPER_ADMIN,ADMIN,LEAD_REVIEWER")]
+        [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
         public async Task<ActionResult<ReportResponse<ApplicationDto>>> GetApplicationReportFull(
             [FromQuery] int pageNumber = 1,
             [FromQuery] int pageSize = 100,
@@ -112,6 +114,7 @@ namespace MMGT.API.Controllers
             [FromQuery] string? priorities = null,
             [FromQuery] Guid? pmiCompanyId = null,
             [FromQuery] Guid? userId = null,
+            [FromQuery] Guid? reviewerId = null,
             [FromQuery] string? searchTerm = null,
             [FromQuery] string sortBy = "CreatedAt",
             [FromQuery] bool sortDescending = true)
@@ -129,6 +132,7 @@ namespace MMGT.API.Controllers
                     Priorities = ParseCommaSeparatedList(priorities),
                     PmiCompanyId = pmiCompanyId,
                     UserId = userId,
+                    ReviewerId = reviewerId,
                     SearchTerm = searchTerm,
                     SortBy = sortBy,
                     SortDescending = sortDescending
@@ -157,6 +161,7 @@ namespace MMGT.API.Controllers
             [FromQuery] string? priorities = null,
             [FromQuery] Guid? pmiCompanyId = null,
             [FromQuery] Guid? userId = null,
+            [FromQuery] Guid? reviewerId = null,
             [FromQuery] string? searchTerm = null)
         {
             try
@@ -170,6 +175,7 @@ namespace MMGT.API.Controllers
                     Priorities = ParseCommaSeparatedList(priorities),
                     PmiCompanyId = pmiCompanyId,
                     UserId = userId,
+                    ReviewerId = reviewerId,
                     SearchTerm = searchTerm
                 };
 
@@ -199,7 +205,7 @@ namespace MMGT.API.Controllers
         /// <param name="sortDescending">Sort direction (default: true for descending)</param>
         /// <returns>Excel file containing all filtered application records</returns>
         [HttpGet("applications/export/excel")]
-        [Authorize(Roles = "SUPER_ADMIN,ADMIN,LEAD_REVIEWER")]
+        [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
         public async Task<IActionResult> ExportApplicationsToExcel(
             [FromQuery] DateTime? dateFrom = null,
             [FromQuery] DateTime? dateTo = null,
@@ -208,6 +214,7 @@ namespace MMGT.API.Controllers
             [FromQuery] string? priorities = null,
             [FromQuery] Guid? pmiCompanyId = null,
             [FromQuery] Guid? userId = null,
+            [FromQuery] Guid? reviewerId = null,
             [FromQuery] string? searchTerm = null,
             [FromQuery] string sortBy = "CreatedAt",
             [FromQuery] bool sortDescending = true)
@@ -223,11 +230,14 @@ namespace MMGT.API.Controllers
                     Priorities = ParseCommaSeparatedList(priorities),
                     PmiCompanyId = pmiCompanyId,
                     UserId = userId,
+                    ReviewerId = reviewerId,
                     SearchTerm = searchTerm,
                     SortBy = sortBy,
                     SortDescending = sortDescending
                 };
 
+                if (Guid.TryParse(User.FindFirst("UserId")?.Value, out var exporterId))
+                    filter.RequestedByUserId = exporterId;
                 var excelData = await _reportService.ExportApplicationsToExcelAsync(filter);
 
                 // Generate filename with timestamp
@@ -241,6 +251,87 @@ namespace MMGT.API.Controllers
             }
         }
 
+        /// <summary>
+        /// Breakdowns for the filtered applications: by PMI company, by reviewer (current assignment), by month submitted,
+        /// and average days from submission to decision.
+        /// </summary>
+        [HttpGet("applications/analytics")]
+        [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+        public async Task<ActionResult<ReportAnalyticsDto>> GetApplicationAnalytics(
+            [FromQuery] DateTime? dateFrom = null,
+            [FromQuery] DateTime? dateTo = null,
+            [FromQuery] string dateField = "CreatedAt",
+            [FromQuery] string? statuses = null,
+            [FromQuery] string? priorities = null,
+            [FromQuery] Guid? pmiCompanyId = null,
+            [FromQuery] Guid? userId = null,
+            [FromQuery] Guid? reviewerId = null,
+            [FromQuery] string? searchTerm = null)
+        {
+            try
+            {
+                var filter = new ReportFilterRequest
+                {
+                    DateFrom = dateFrom,
+                    DateTo = dateTo,
+                    DateField = dateField,
+                    Statuses = ParseCommaSeparatedList(statuses),
+                    Priorities = ParseCommaSeparatedList(priorities),
+                    PmiCompanyId = pmiCompanyId,
+                    UserId = userId,
+                    ReviewerId = reviewerId,
+                    SearchTerm = searchTerm
+                };
+        
+                var analytics = await _reportService.GetReportAnalyticsAsync(filter);
+                return Ok(analytics);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+        
+        /// <summary>
+        /// Reviewer activity for oversight and workload planning: open and overdue work, decisions in the period,
+        /// and turnaround from each reviewer's own assignment to their own decision. No ratings or rankings.
+        /// </summary>
+        [HttpGet("reviewers")]
+        [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+        public async Task<ActionResult<ReviewerActivityReportDto>> GetReviewerActivity(
+            [FromQuery] DateTime? dateFrom = null,
+            [FromQuery] DateTime? dateTo = null,
+            [FromQuery] bool includeDecisions = true)
+        {
+            try
+            {
+                return Ok(await _reportService.GetReviewerActivityAsync(dateFrom, dateTo, includeDecisions));
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+        
+        [HttpGet("reviewers/export/excel")]
+        [Authorize(Roles = "SUPER_ADMIN,LEAD_REVIEWER")]
+        public async Task<IActionResult> ExportReviewerActivityToExcel(
+            [FromQuery] DateTime? dateFrom = null,
+            [FromQuery] DateTime? dateTo = null)
+        {
+            try
+            {
+                Guid? requesterId = Guid.TryParse(User.FindFirst("UserId")?.Value, out var rid) ? rid : null;
+                var bytes = await _reportService.ExportReviewerActivityToExcelAsync(dateFrom, dateTo, requesterId);
+                var fileName = $"Reviewer_Activity_{DateTime.UtcNow:yyyyMMdd_HHmmss}.xlsx";
+                return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+        
         private List<string>? ParseCommaSeparatedList(string? input)
         {
             if (string.IsNullOrWhiteSpace(input))

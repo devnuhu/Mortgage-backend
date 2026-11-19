@@ -11,6 +11,7 @@ namespace MMGT.API.DTOs.Performance
         public Guid NewReviewerId { get; set; }
         public string NewReviewerName { get; set; }
         public string ReassignmentReason { get; set; }
+        public string Category { get; set; } = string.Empty;
         public string ReassignmentDetails { get; set; }
         public Guid? ReassignedByUserId { get; set; }
         public string ReassignedByUserName { get; set; }
@@ -29,6 +30,7 @@ namespace MMGT.API.DTOs.Performance
         public int WorkloadBalancingReassignments { get; set; }
         public int PerformanceIssueReassignments { get; set; }
         public Dictionary<string, int> ReassignmentsByReason { get; set; } = new();
+        public Dictionary<string, int> ReassignmentsByCategory { get; set; } = new();
         public List<ReassignmentHistoryDto> RecentReassignments { get; set; } = new();
         public double AverageReassignmentsPerReviewer { get; set; }
         public Dictionary<Guid, int> ReassignmentCountByReviewer { get; set; } = new();

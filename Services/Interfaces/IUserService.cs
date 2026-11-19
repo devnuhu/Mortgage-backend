@@ -8,6 +8,7 @@ namespace MMGT.API.Services.Interfaces
         Task<UserDto> CreateUserAsync(CreateUserRequest request);
         Task<bool> UpdateUserAsync(Guid id, object updateData);
         Task<bool> DeleteUserAsync(Guid id);
+        Task<bool> SetUserActiveAsync(Guid actorId, Guid userId, bool isActive, string? reason);
         Task<string?> ResetUserPasswordAsync(Guid userId);
 
         // New: regenerate & resend the one-time first-login setup link
