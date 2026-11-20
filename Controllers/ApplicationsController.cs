@@ -55,13 +55,13 @@ namespace MMGT.API.Controllers
 
         [HttpGet("my-applications/paged")]
         [Authorize(Roles = "CLIENT,PMI,SERVICE_MANAGER")]
-        public async Task<ActionResult<PaginatedResponse<ApplicationDto>>> GetMyApplicationsPaged([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50, [FromQuery] string? searchTerm = null)
+        public async Task<ActionResult<PaginatedResponse<ApplicationDto>>> GetMyApplicationsPaged([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50, [FromQuery] string? searchTerm = null, [FromQuery] string? status = null)
         {
             try
             {
                 var userId = GetCurrentUserId();
                 var pagination = new PaginationRequest { PageNumber = pageNumber, PageSize = pageSize };
-                var result = await _applicationService.GetApplicationsByUserPagedAsync(userId, pagination, searchTerm);
+                var result = await _applicationService.GetApplicationsByUserPagedAsync(userId, pagination, searchTerm, status);
                 return Ok(result);
             }
             catch (Exception ex)
@@ -88,13 +88,13 @@ namespace MMGT.API.Controllers
 
         [HttpGet("my-applications/rejected")]
         [Authorize(Roles = "CLIENT,PMI,SERVICE_MANAGER")]
-        public async Task<ActionResult<PaginatedResponse<ApplicationDetailsDto>>> GetMyRejectedApplications([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
+        public async Task<ActionResult<PaginatedResponse<ApplicationDetailsDto>>> GetMyRejectedApplications([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50, [FromQuery] string? searchTerm = null)
         {
             try
             {
                 var userId = GetCurrentUserId();
                 var pagination = new PaginationRequest { PageNumber = pageNumber, PageSize = pageSize };
-                var result = await _applicationService.GetApplicationsByUserRejectedPagedAsync(userId, pagination);
+                var result = await _applicationService.GetApplicationsByUserRejectedPagedAsync(userId, pagination, searchTerm);
                 return Ok(result);
             }
             catch (Exception ex)
@@ -122,7 +122,7 @@ namespace MMGT.API.Controllers
         /// Get complete application details with review history, assignments, and documents.
         /// SERVICE_MANAGER can view any application.
         /// LEAD_REVIEWER can view any application (for reassignment purposes).
-        /// ADMIN/REVIEWER can view only assigned applications.
+        /// ADMIN/REVIEWER can view any application (read only).
         /// Other authenticated users can view only their own applications.
         /// </summary>
         [HttpGet("{id}/details")]
@@ -133,10 +133,10 @@ namespace MMGT.API.Controllers
             {
                 var userId = GetCurrentUserId();
                 var application = await _applicationService.GetApplicationDetailsAsync(id);
-                if (MMGT.API.Services.ApplicationAccessGuard.IsServiceManagerOnly(HttpContext) && !await MMGT.API.Services.ApplicationAccessGuard.IsOwnerAsync(HttpContext, id) && application?.Documents != null)
-                {
-                    // Service Managers see the case and the rejection reasons, never the files of a case they did not create.
-                    foreach (var d in application.Documents) { d.FileName = string.Empty; d.FileSize = 0; }
+                if (MMGT.API.Services.ApplicationAccessGuard.IsServiceManagerOnly(HttpContext) && !await MMGT.API.Services.ApplicationAccessGuard.IsOwnerAsync(HttpContext, id) && application?.Documents != null)
+                {
+                    // Service Managers see the case and the rejection reasons, never the files of a case they did not create.
+                    foreach (var d in application.Documents) { d.FileName = string.Empty; d.FileSize = 0; }
                 }
 
                 // Check authorization
@@ -160,14 +160,10 @@ namespace MMGT.API.Controllers
                     return Ok(application);
                 }
 
-                // ADMIN/REVIEWER can view applications assigned to them
+                // ADMIN/REVIEWER can view any application (read only); acting on it still needs their own assignment.
                 if (userRole == "ADMIN" || userRole == "REVIEWER")
                 {
-                    // Check if user has an active assignment
-                    var hasActiveAssignment = application.AssignmentHistory != null && 
-                        application.AssignmentHistory.Any(a => a.IsActive);
-
-                    if (hasActiveAssignment && await MMGT.API.Services.ApplicationAccessGuard.CanViewAsync(HttpContext, id))
+                    if (await MMGT.API.Services.ApplicationAccessGuard.CanViewAsync(HttpContext, id))
                     {
                         return Ok(application);
                     }
@@ -285,7 +281,7 @@ namespace MMGT.API.Controllers
         /// Pending status means "waiting to confirm information after reviewing".
         /// </summary>
         [HttpPut("{id}/status")]
-        [Authorize(Roles = "SUPER_ADMIN,ADMIN")]
+        [Authorize(Roles = "SUPER_ADMIN,ADMIN,LEAD_REVIEWER")]
         public async Task<ActionResult<ApplicationDto>> UpdateApplicationStatus(Guid id, [FromBody] UpdateApplicationStatusRequest request)
         {
             try

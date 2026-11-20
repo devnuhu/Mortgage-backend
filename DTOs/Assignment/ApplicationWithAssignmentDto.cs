@@ -6,6 +6,8 @@ namespace MMGT.API.DTOs.Assignment
     /// </summary>
     public class ApplicationWithAssignmentDto
     {
+    /// <summary>True while a step-down request holds the application (M56). Locked applications cannot be reassigned.</summary>
+    public bool IsLocked { get; set; }
         /// <summary>
         /// Application ID
         /// </summary>

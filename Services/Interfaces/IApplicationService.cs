@@ -10,9 +10,9 @@ namespace MMGT.API.Services.Interfaces
         Task<List<ApplicationDto>> GetAllApplicationsAsync();
         Task<PaginatedResponse<ApplicationDto>> GetAllApplicationsPagedAsync(PaginationRequest pagination);
         Task<List<ApplicationDto>> GetApplicationsByUserAsync(Guid userId);
-        Task<PaginatedResponse<ApplicationDto>> GetApplicationsByUserPagedAsync(Guid userId, PaginationRequest pagination, string? searchTerm = null);
+        Task<PaginatedResponse<ApplicationDto>> GetApplicationsByUserPagedAsync(Guid userId, PaginationRequest pagination, string? searchTerm = null, string? status = null);
         Task<ClientApplicationSummaryDto> GetApplicationsSummaryByUserAsync(Guid userId);
-        Task<PaginatedResponse<ApplicationDetailsDto>> GetApplicationsByUserRejectedPagedAsync(Guid userId, PaginationRequest pagination);
+        Task<PaginatedResponse<ApplicationDetailsDto>> GetApplicationsByUserRejectedPagedAsync(Guid userId, PaginationRequest pagination, string? searchTerm = null);
         Task<List<ApplicationDto>> GetApplicationsByPMIAsync(Guid pmiCompanyId);
         Task<PaginatedResponse<ApplicationDto>> GetApplicationsByPMIPagedAsync(Guid pmiCompanyId, PaginationRequest pagination);
         Task<ApplicationDto> GetApplicationByIdAsync(Guid id);

@@ -578,10 +578,9 @@ namespace MMGT.API.Services
                     return false;
                 }
 
-                if (!assignment.IsActive || (assignment.Application != null && (assignment.Application.IsLocked
-                    || assignment.Application.Status == "approved" || assignment.Application.Status == "rejected" || assignment.Application.Status == "completed")))
+                if (!assignment.IsActive || (assignment.Application != null && assignment.Application.IsLocked)) // M56: only a step-down lock refuses
                 {
-                    _logger.LogWarning($"Assignment {assignmentId} not reassigned: it is inactive, or the application is locked or already decided");
+                    _logger.LogWarning($"Assignment {assignmentId} not reassigned: it is inactive or the application is locked");
                     return false;
                 }
                 // Store old reviewer for tracking
@@ -663,10 +662,9 @@ namespace MMGT.API.Services
 
                 foreach (var assignment in matchingAssignments)
                 {
-                    if (assignment.Application != null && (assignment.Application.IsLocked
-                        || assignment.Application.Status == "approved" || assignment.Application.Status == "rejected" || assignment.Application.Status == "completed"))
+                    if (assignment.Application != null && assignment.Application.IsLocked)
                     {
-                        _logger.LogWarning($"Assignment {assignment.Id} skipped: the application is locked or already decided");
+                        _logger.LogWarning($"Assignment {assignment.Id} skipped: the application is locked");
                         continue;
                     }
                     var oldReviewerId = assignment.ReviewerId;
@@ -713,7 +711,7 @@ namespace MMGT.API.Services
 
                 if (reassignedCount == 0)
                 {
-                    _logger.LogWarning("No application was reassigned: all were locked or already decided");
+                    _logger.LogWarning("No application was reassigned: all were locked");
                     return false;
                 }
                 // Save all reassignment histories and assignment updates together
@@ -903,7 +901,7 @@ namespace MMGT.API.Services
                     ReassignmentReason = a.ReassignmentReason,
                     AssignedBy = a.AssignedBy ?? Guid.Empty,
                     ApplicationCreatedAt = a.Application?.CreatedAt ?? DateTime.MinValue,
-                    ApplicationSubmittedAt = a.Application?.SubmittedAt, IsHni = a.Application?.IsHni, HniCheckedAt = a.Application?.HniCheckedAt
+                    ApplicationSubmittedAt = a.Application?.SubmittedAt, IsHni = a.Application?.IsHni, HniCheckedAt = a.Application?.HniCheckedAt, IsLocked = a.Application?.IsLocked ?? false
                 }).ToList();
 
                 // Calculate summary statistics

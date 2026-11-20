@@ -37,21 +37,21 @@ namespace MMGT.API.Services
             return ownerId == null || ownerId == me;
         }
 
-        /// <summary>True when the user's only staff role is SERVICE_MANAGER.</summary>
-        public static bool IsServiceManagerOnly(HttpContext http) =>
-            HasRole(http.User, "SERVICE_MANAGER") &&
-            !HasRole(http.User, "LEAD_REVIEWER") && !HasRole(http.User, "SUPER_ADMIN") &&
-            !HasRole(http.User, "ADMIN") && !HasRole(http.User, "REVIEWER");
-
-        /// <summary>
-        /// Who may open the FILES of an application. Same as CanViewAsync, except a Service Manager only for applications they created.
-        /// (A Service Manager can still see the case, its status, review history and rejection reasons through CanViewAsync.)
-        /// </summary>
-        public static async Task<bool> CanViewDocumentsAsync(HttpContext http, Guid applicationId)
-        {
-            if (IsServiceManagerOnly(http)) return await IsOwnerAsync(http, applicationId);
-            return await CanViewAsync(http, applicationId);
-        }
+        /// <summary>True when the user's only staff role is SERVICE_MANAGER.</summary>
+        public static bool IsServiceManagerOnly(HttpContext http) =>
+            HasRole(http.User, "SERVICE_MANAGER") &&
+            !HasRole(http.User, "LEAD_REVIEWER") && !HasRole(http.User, "SUPER_ADMIN") &&
+            !HasRole(http.User, "ADMIN") && !HasRole(http.User, "REVIEWER");
+
+        /// <summary>
+        /// Who may open the FILES of an application. Same as CanViewAsync, except a Service Manager only for applications they created.
+        /// (A Service Manager can still see the case, its status, review history and rejection reasons through CanViewAsync.)
+        /// </summary>
+        public static async Task<bool> CanViewDocumentsAsync(HttpContext http, Guid applicationId)
+        {
+            if (IsServiceManagerOnly(http)) return await IsOwnerAsync(http, applicationId);
+            return await CanViewAsync(http, applicationId);
+        }
         public static async Task<bool> CanViewAsync(HttpContext http, Guid applicationId)
         {
             var me = UserIdOf(http.User);
@@ -61,8 +61,9 @@ namespace MMGT.API.Services
             if (ownerId == null) return true;          // not found: the caller reports that
             if (ownerId == me) return true;
             if (HasRole(http.User, "SERVICE_MANAGER") || HasRole(http.User, "LEAD_REVIEWER") || HasRole(http.User, "SUPER_ADMIN")) return true;
-            if (HasRole(http.User, "ADMIN") || HasRole(http.User, "REVIEWER"))
-                return await ctx.ApplicationAssignments.AsNoTracking().AnyAsync(x => x.ApplicationId == applicationId && x.ReviewerId == me && x.IsActive);
+            // Reviewers may VIEW any application (Submissions list and 360 view). This guard only gates reads;
+            // deciding and other actions still require the reviewer's own active assignment.
+            if (HasRole(http.User, "ADMIN") || HasRole(http.User, "REVIEWER")) return true;
             return false;
         }
     }

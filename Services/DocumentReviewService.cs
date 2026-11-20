@@ -21,11 +21,14 @@ namespace MMGT.API.Services
             _context = context;
         }
 
-        // An assigned reviewer (ADMIN) may review only applications assigned to them. Lead Reviewer and Super Admin may review any.
+        // An assigned reviewer (ADMIN) may review only applications assigned to them.
+        // A Lead Reviewer may review any application, including overturning a reviewer's document rejection.
+        // A Super Admin oversees only. (Locked applications are refused by the caller's lock guard.)
         private async Task EnsureMayReviewAsync(Guid applicationId, MMGT.API.Models.User reviewer)
         {
-            if (reviewer.Role == "LEAD_REVIEWER" || reviewer.Role == "SUPER_ADMIN")
-                throw new InvalidOperationException("Lead Reviewers and Super Admins oversee applications and do not review documents. The assigned reviewer does.");
+            if (reviewer.Role == "SUPER_ADMIN")
+                throw new InvalidOperationException("Super Admins oversee applications and do not review documents. The assigned reviewer or a Lead Reviewer does.");
+            if (reviewer.Role == "LEAD_REVIEWER") return;
             var mine = await _context.ApplicationAssignments.AnyAsync(a => a.ApplicationId == applicationId && a.ReviewerId == reviewer.Id && a.IsActive);
             if (!mine) throw new InvalidOperationException("This application is not assigned to you, so you cannot review its documents.");
         }

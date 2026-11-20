@@ -547,7 +547,7 @@ namespace MMGT.API.Controllers
             [FromQuery] DateTime? submittedFromDate = null,
             [FromQuery] DateTime? submittedToDate = null,
             [FromQuery] bool? isHni = null,
-            [FromQuery] bool includeDecided = false)
+            [FromQuery] bool includeDecided = true)
         {
             try
             {

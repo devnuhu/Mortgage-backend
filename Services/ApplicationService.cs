@@ -113,7 +113,7 @@ namespace MMGT.API.Services
                 .ToListAsync();
         }
 
-        public async Task<PaginatedResponse<ApplicationDto>> GetApplicationsByUserPagedAsync(Guid userId, PaginationRequest pagination, string? searchTerm = null)
+        public async Task<PaginatedResponse<ApplicationDto>> GetApplicationsByUserPagedAsync(Guid userId, PaginationRequest pagination, string? searchTerm = null, string? status = null)
         {
             pagination.Validate();
 
@@ -134,6 +134,18 @@ namespace MMGT.API.Services
                     (a.PhoneNumber != null && a.PhoneNumber.ToLower().Contains(normalizedSearch)));
             }
 
+            // Optional status filter: comma-separated raw statuses, e.g. "submitted,resubmitted".
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                var wantedStatuses = status.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(s => s.ToLowerInvariant())
+                    .Distinct()
+                    .Take(12)
+                    .ToList();
+                if (wantedStatuses.Count > 0)
+                    applicationQuery = applicationQuery.Where(a => wantedStatuses.Contains(a.Status.ToLower()));
+            }
+            
             // Execute count first
             var totalCount = await applicationQuery.CountAsync();
 
@@ -180,15 +192,24 @@ namespace MMGT.API.Services
             };
         }
 
-        public async Task<PaginatedResponse<ApplicationDetailsDto>> GetApplicationsByUserRejectedPagedAsync(Guid userId, PaginationRequest pagination)
+        public async Task<PaginatedResponse<ApplicationDetailsDto>> GetApplicationsByUserRejectedPagedAsync(Guid userId, PaginationRequest pagination, string? searchTerm = null)
         {
             pagination.Validate();
 
+            var rejectedSearch = string.IsNullOrWhiteSpace(searchTerm) ? null : searchTerm.Trim().ToLowerInvariant();
             // Get applications that match user and rejected status
+            var totalCount = await _context.Applications
+                .AsNoTracking()
+                .Where(a => a.UserId == userId && a.Status == "rejected" && (rejectedSearch == null || a.ApplicationNumber.ToLower().Contains(rejectedSearch) || a.RsaPin.ToLower().Contains(rejectedSearch) || a.FirstName.ToLower().Contains(rejectedSearch) || a.LastName.ToLower().Contains(rejectedSearch) || (a.FirstName + " " + a.LastName).ToLower().Contains(rejectedSearch) || (a.PhoneNumber != null && a.PhoneNumber.ToLower().Contains(rejectedSearch))))
+                .CountAsync();
+
             var applicationsData = await _context.Applications
                 .AsNoTracking()
-                .Where(a => a.UserId == userId && a.Status == "rejected")
+                .Where(a => a.UserId == userId && a.Status == "rejected" && (rejectedSearch == null || a.ApplicationNumber.ToLower().Contains(rejectedSearch) || a.RsaPin.ToLower().Contains(rejectedSearch) || a.FirstName.ToLower().Contains(rejectedSearch) || a.LastName.ToLower().Contains(rejectedSearch) || (a.FirstName + " " + a.LastName).ToLower().Contains(rejectedSearch) || (a.PhoneNumber != null && a.PhoneNumber.ToLower().Contains(rejectedSearch))))
                 .OrderByDescending(a => a.UpdatedAt)
+                .ThenBy(a => a.Id)
+                .Skip((pagination.PageNumber - 1) * pagination.PageSize)
+                .Take(pagination.PageSize)
                 .Select(a => new
                 {
                     // Application properties
@@ -256,13 +277,10 @@ namespace MMGT.API.Services
                 .ToListAsync();
 
             // Get total count before pagination
-            var totalCount = applicationsData.Count;
+            // totalCount was counted in the database above.
 
             // Apply pagination
-            var paginatedData = applicationsData
-                .Skip((pagination.PageNumber - 1) * pagination.PageSize)
-                .Take(pagination.PageSize)
-                .ToList();
+            var paginatedData = applicationsData.ToList();
 
             // Map to ApplicationDetailsDto
             var detailedApplications = paginatedData.Select(a => new ApplicationDetailsDto
@@ -564,11 +582,14 @@ namespace MMGT.API.Services
             if (currentStatusKey == "draft") throw new Exception("A draft has not been submitted yet, so it cannot be decided.");
             if (application.IsLocked) throw new Exception("This application is locked by an open step-down request.");
             var deciderRole = await _context.Users.AsNoTracking().Where(u => u.Id == reviewerId).Select(u => u.Role).FirstOrDefaultAsync() ?? string.Empty;
-            var deciderIsSenior = deciderRole == "LEAD_REVIEWER" || deciderRole == "SUPER_ADMIN";
+            // Super Admin: oversight only (may reopen). Lead Reviewer: decides any application, including
+            // overturning a reviewer's rejection, and may reopen. ADMIN/REVIEWER: only their own assignment.
+            var deciderIsSuperAdmin = deciderRole == "SUPER_ADMIN";
+            var deciderIsLead = deciderRole == "LEAD_REVIEWER";
             var isReopen = (currentStatusKey == "approved" || currentStatusKey == "completed") && (newStatusKey == "under_review" || newStatusKey == "pending");
-            if (deciderIsSenior && !isReopen)
-                throw new Exception("Lead Reviewers and Super Admins oversee applications and do not decide them. The assigned reviewer decides.");
-            if (!deciderIsSenior)
+            if (deciderIsSuperAdmin && !isReopen)
+                throw new Exception("Super Admins oversee applications and do not decide them. The assigned reviewer or a Lead Reviewer decides.");
+            if (!deciderIsSuperAdmin && !deciderIsLead)
             {
                 var isMine = await _context.ApplicationAssignments.AnyAsync(a => a.ApplicationId == id && a.ReviewerId == reviewerId && a.IsActive);
                 if (!isMine) throw new Exception("This application is not assigned to you, so you cannot change its status.");
@@ -639,11 +660,11 @@ namespace MMGT.API.Services
                 if (isRejection && !string.IsNullOrWhiteSpace(creatorEmail))
                 {
                     // The user who created the application is told it was rejected, with the reviewer's comments.
-                    var rejectedDocRows = await _context.ApplicationDocuments.AsNoTracking()
-                        .Where(d => d.ApplicationId == application.Id && (d.ReviewStatus == "Rejected" || d.ReviewStatus == "RequestedRevision"))
-                        .Select(d => new { Name = d.CustomName ?? (d.DocumentType != null ? d.DocumentType.Name : d.FileName), d.ReviewComments })
-                        .ToListAsync();
-                    var rejectedDocs = rejectedDocRows.Select(d => (d.Name, d.ReviewComments)).ToList();
+                    var rejectedDocRows = await _context.ApplicationDocuments.AsNoTracking()
+                        .Where(d => d.ApplicationId == application.Id && (d.ReviewStatus == "Rejected" || d.ReviewStatus == "RequestedRevision"))
+                        .Select(d => new { Name = d.CustomName ?? (d.DocumentType != null ? d.DocumentType.Name : d.FileName), d.ReviewComments })
+                        .ToListAsync();
+                    var rejectedDocs = rejectedDocRows.Select(d => (d.Name, d.ReviewComments)).ToList();
                     await _emailService.SendApplicationRejectedAsync(creatorEmail, application.Id, application.ApplicationNumber, application.RsaPin, $"{application.FirstName} {application.LastName}", request.Comments, rejectedDocs);
                 }
                 var applicantName = $"{application.FirstName} {application.LastName}";
@@ -877,55 +898,55 @@ namespace MMGT.API.Services
                 }
             }
 
-            // ===== M39: resubmission - make sure someone owns it, and tell the reviewer =====
-            if (previousStatus == "rejected" || previousStatus == "resubmitted")
-            {
-                try
-                {
-                    var hasOwner = await _context.ApplicationAssignments.AnyAsync(a => a.ApplicationId == id && a.IsActive);
-                    if (!hasOwner)
-                    {
-                        _logger.LogWarning("[RESUBMIT] Application {Id} has no active reviewer; auto-assigning.", id);
-                        await _assignmentService.AutoAssignApplicationAsync(id);
-                    }
-                    var reviewerRow = await _context.ApplicationAssignments.AsNoTracking()
-                        .Where(a => a.ApplicationId == id && a.IsActive)
-                        .Select(a => new { ReviewerUserId = a.Reviewer.Id, a.Reviewer.Email })
-                        .FirstOrDefaultAsync();
-
-                    if (reviewerRow != null)
-                    {
-                        // In-app message for the processor (shown in the bell).
-                        var applicantFullName = $"{application.FirstName} {application.LastName}".Trim();
-                        var noteTrim = string.IsNullOrWhiteSpace(note) ? "" : note.Trim();
-                        var noteText = noteTrim.Length == 0 ? "" : " Note from the PMI: " + (noteTrim.Length > 300 ? noteTrim.Substring(0, 300) + "..." : noteTrim);
-                        var inApp = new MMGT.API.Models.UserNotification
-                        {
-                            Id = Guid.NewGuid(),
-                            UserId = reviewerRow.ReviewerUserId,
-                            Type = "application_resubmitted",
-                            Title = "Application resubmitted",
-                            Message = $"{application.ApplicationNumber} ({applicantFullName}) was resubmitted by the PMI after rejection (resubmission #{application.ResubmissionCount}).{noteText}",
-                            ApplicationId = application.Id,
-                            LinkPath = $"/admin/review/{application.Id}",
-                            IsRead = false,
-                            CreatedAt = DateTime.UtcNow
-                        };
-                        var inAppEntry = _context.Notifications.Add(inApp);
-                        try { await _context.SaveChangesAsync(); }
-                        catch { inAppEntry.State = Microsoft.EntityFrameworkCore.EntityState.Detached; throw; }
-
-                        // Email kept for later: only sent when Notifications:EmailOnResubmission is true.
-                        if (MMGT.API.Services.NotificationSwitches.EmailOnResubmission && !string.IsNullOrWhiteSpace(reviewerRow.Email))
-                            await _emailService.SendApplicationResubmittedAsync(reviewerRow.Email, application.Id, application.ApplicationNumber, application.RsaPin, applicantFullName, application.ResubmissionCount, note);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "[RESUBMIT] Could not assign or notify the reviewer for application {Id}", id);
-                }
-            }
-            // ===== end M39 =====
+            // ===== M39: resubmission - make sure someone owns it, and tell the reviewer =====
+            if (previousStatus == "rejected" || previousStatus == "resubmitted")
+            {
+                try
+                {
+                    var hasOwner = await _context.ApplicationAssignments.AnyAsync(a => a.ApplicationId == id && a.IsActive);
+                    if (!hasOwner)
+                    {
+                        _logger.LogWarning("[RESUBMIT] Application {Id} has no active reviewer; auto-assigning.", id);
+                        await _assignmentService.AutoAssignApplicationAsync(id);
+                    }
+                    var reviewerRow = await _context.ApplicationAssignments.AsNoTracking()
+                        .Where(a => a.ApplicationId == id && a.IsActive)
+                        .Select(a => new { ReviewerUserId = a.Reviewer.Id, a.Reviewer.Email })
+                        .FirstOrDefaultAsync();
+
+                    if (reviewerRow != null)
+                    {
+                        // In-app message for the processor (shown in the bell).
+                        var applicantFullName = $"{application.FirstName} {application.LastName}".Trim();
+                        var noteTrim = string.IsNullOrWhiteSpace(note) ? "" : note.Trim();
+                        var noteText = noteTrim.Length == 0 ? "" : " Note from the PMI: " + (noteTrim.Length > 300 ? noteTrim.Substring(0, 300) + "..." : noteTrim);
+                        var inApp = new MMGT.API.Models.UserNotification
+                        {
+                            Id = Guid.NewGuid(),
+                            UserId = reviewerRow.ReviewerUserId,
+                            Type = "application_resubmitted",
+                            Title = "Application resubmitted",
+                            Message = $"{application.ApplicationNumber} ({applicantFullName}) was resubmitted by the PMI after rejection (resubmission #{application.ResubmissionCount}).{noteText}",
+                            ApplicationId = application.Id,
+                            LinkPath = $"/admin/review/{application.Id}",
+                            IsRead = false,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        var inAppEntry = _context.Notifications.Add(inApp);
+                        try { await _context.SaveChangesAsync(); }
+                        catch { inAppEntry.State = Microsoft.EntityFrameworkCore.EntityState.Detached; throw; }
+
+                        // Email kept for later: only sent when Notifications:EmailOnResubmission is true.
+                        if (MMGT.API.Services.NotificationSwitches.EmailOnResubmission && !string.IsNullOrWhiteSpace(reviewerRow.Email))
+                            await _emailService.SendApplicationResubmittedAsync(reviewerRow.Email, application.Id, application.ApplicationNumber, application.RsaPin, applicantFullName, application.ResubmissionCount, note);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[RESUBMIT] Could not assign or notify the reviewer for application {Id}", id);
+                }
+            }
+            // ===== end M39 =====
             // Notify mortgage.pmi.com about submission as well
             try
             {
@@ -1192,21 +1213,21 @@ namespace MMGT.API.Services
                 .ToListAsync();
         }
 
-        // Reviewer actions only: the client's own submit / resubmit rows are not reviewer decisions.
-        private static MMGT.API.Models.ApplicationReviewHistory? LatestReviewerAction(MMGT.API.Models.Application a)
-        {
-            return a.ReviewHistory
-                .Where(rh => rh.Status != null && (rh.Status.ToLower() == "under_review" || rh.Status.ToLower() == "pending" || rh.Status.ToLower() == "approved" || rh.Status.ToLower() == "rejected" || rh.Status.ToLower() == "completed"))
-                .OrderByDescending(rh => rh.CreatedAt)
-                .FirstOrDefault();
-        }
-
-        private static string? ReviewerDisplayName(MMGT.API.Models.ApplicationReviewHistory? h)
-        {
-            if (h?.ReviewedBy == null) return null;
-            var n = (h.ReviewedBy.FirstName + " " + h.ReviewedBy.LastName).Trim();
-            return n.Length == 0 ? null : n;
-        }
+        // Reviewer actions only: the client's own submit / resubmit rows are not reviewer decisions.
+        private static MMGT.API.Models.ApplicationReviewHistory? LatestReviewerAction(MMGT.API.Models.Application a)
+        {
+            return a.ReviewHistory
+                .Where(rh => rh.Status != null && (rh.Status.ToLower() == "under_review" || rh.Status.ToLower() == "pending" || rh.Status.ToLower() == "approved" || rh.Status.ToLower() == "rejected" || rh.Status.ToLower() == "completed"))
+                .OrderByDescending(rh => rh.CreatedAt)
+                .FirstOrDefault();
+        }
+
+        private static string? ReviewerDisplayName(MMGT.API.Models.ApplicationReviewHistory? h)
+        {
+            if (h?.ReviewedBy == null) return null;
+            var n = (h.ReviewedBy.FirstName + " " + h.ReviewedBy.LastName).Trim();
+            return n.Length == 0 ? null : n;
+        }
         public async Task<PaginatedResponse<ApplicationSearchDto>> SearchApplicationsAdvancedAsync(
             string? rsaPin = null,
             string? borrowerName = null,
@@ -1245,10 +1266,10 @@ namespace MMGT.API.Services
                     EF.Functions.Like(a.MiddleName, namePattern));
             }
 
-            if (submittedOnly) query = query.Where(a => a.SubmittedAt != null);
-            if (!string.IsNullOrWhiteSpace(status)) { var statusKey = status.Trim().ToLower(); query = query.Where(a => a.Status.ToLower() == statusKey); }
-            if (pmiCompanyId.HasValue) query = query.Where(a => a.PmiCompanyId == pmiCompanyId.Value);
-            if (isHni.HasValue) query = query.Where(a => a.IsHni == isHni.Value);
+            if (submittedOnly) query = query.Where(a => a.SubmittedAt != null);
+            if (!string.IsNullOrWhiteSpace(status)) { var statusKey = status.Trim().ToLower(); query = query.Where(a => a.Status.ToLower() == statusKey); }
+            if (pmiCompanyId.HasValue) query = query.Where(a => a.PmiCompanyId == pmiCompanyId.Value);
+            if (isHni.HasValue) query = query.Where(a => a.IsHni == isHni.Value);
             // Apply SubmittedAt date range filter
             if (submittedFromDate.HasValue)
             {
@@ -1298,21 +1319,21 @@ namespace MMGT.API.Services
                 CreatedAt = a.CreatedAt,
                 SubmittedAt = a.SubmittedAt,
                 UpdatedAt = a.UpdatedAt,
-                LatestReviewComment = LatestReviewerAction(a)?.Comments,
-                LatestReviewerName = ReviewerDisplayName(LatestReviewerAction(a)),
-                LatestReviewDate = LatestReviewerAction(a)?.CreatedAt
-            }).ToList();
-
-            // The page does not load documents, so count the latest versions here.
-            if (searchResults.Count > 0)
-            {
-                var pageIdSet = new HashSet<Guid>(searchResults.Select(r => r.Id));
-                var docCountMap = await _context.ApplicationDocuments.AsNoTracking()
-                    .Where(d => pageIdSet.Contains(d.ApplicationId) && d.IsLatestVersion)
-                    .GroupBy(d => d.ApplicationId)
-                    .Select(g => new { Id = g.Key, Count = g.Count() })
-                    .ToDictionaryAsync(x => x.Id, x => x.Count);
-                foreach (var r in searchResults) r.DocumentCount = docCountMap.TryGetValue(r.Id, out var n) ? n : 0;
+                LatestReviewComment = LatestReviewerAction(a)?.Comments,
+                LatestReviewerName = ReviewerDisplayName(LatestReviewerAction(a)),
+                LatestReviewDate = LatestReviewerAction(a)?.CreatedAt
+            }).ToList();
+
+            // The page does not load documents, so count the latest versions here.
+            if (searchResults.Count > 0)
+            {
+                var pageIdSet = new HashSet<Guid>(searchResults.Select(r => r.Id));
+                var docCountMap = await _context.ApplicationDocuments.AsNoTracking()
+                    .Where(d => pageIdSet.Contains(d.ApplicationId) && d.IsLatestVersion)
+                    .GroupBy(d => d.ApplicationId)
+                    .Select(g => new { Id = g.Key, Count = g.Count() })
+                    .ToDictionaryAsync(x => x.Id, x => x.Count);
+                foreach (var r in searchResults) r.DocumentCount = docCountMap.TryGetValue(r.Id, out var n) ? n : 0;
             }
 
             return new PaginatedResponse<ApplicationSearchDto>
